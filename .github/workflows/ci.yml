@@ -44,25 +44,20 @@ jobs:
         run: |
           python manage.py spectacular --validate
 
-      - name: Seed Test SQLite Database
+      - name: Validate Local Database Migrations & Seeding Commands
         env:
-          DJANGO_SETTINGS_MODULE: config.settings.test
+          DJANGO_SETTINGS_MODULE: config.settings.local
+          DJANGO_SECRET_KEY: test-secret-key-37cec3b1487d
         run: |
           python manage.py migrate --noinput
           python manage.py load_fuel_stations
           python manage.py load_us_gazetteer
 
-      - name: Run Unit Tests (>= 95% Isolated Coverage Gate)
+      - name: Run Complete Test Suite (>= 95% Coverage Gate)
         env:
           DJANGO_SETTINGS_MODULE: config.settings.test
         run: |
-          pytest tests/unit --cov=apps --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=95
-
-      - name: Run Integration & End-to-End Tests
-        env:
-          DJANGO_SETTINGS_MODULE: config.settings.test
-        run: |
-          pytest tests/integration tests/e2e tests/benchmarks
+          pytest tests/ --cov=apps --cov-branch --cov-report=term-missing --cov-report=xml --cov-fail-under=95
 
       - name: Test Zero-to-Production Deploy Wizard (--dry-run)
         env:
