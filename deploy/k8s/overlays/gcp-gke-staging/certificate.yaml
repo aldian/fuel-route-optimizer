@@ -1,0 +1,7 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: staging-fuel-optimizer-certificate
+spec:
+  domains:
+    - staging-api.fuel-optimizer.example.com

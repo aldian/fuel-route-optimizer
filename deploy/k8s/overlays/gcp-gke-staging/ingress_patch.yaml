@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fuel-route-optimizer-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "staging-fuel-optimizer-certificate"
+spec:
+  rules:
+    - host: staging-api.fuel-optimizer.example.com
+      http:
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: fuel-route-optimizer
+                port:
+                  number: 80

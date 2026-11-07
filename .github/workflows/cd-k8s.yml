@@ -2,32 +2,47 @@ name: CD Kubernetes Deployment
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
     inputs:
-      overlay:
-        description: 'Kubernetes overlay to apply'
+      target_env:
+        description: 'Target Environment'
         required: true
-        default: 'gcp-gke'
+        default: 'staging'
         type: choice
         options:
-          - gcp-gke
-          - aws-eks
-          - azure-aks
-          - generic
+          - staging
+          - production
 
 jobs:
   deploy:
-    name: Deploy to Kubernetes (${{ github.event.inputs.overlay || 'gcp-gke' }})
+    name: Deploy to Kubernetes (${{ github.ref_type == 'tag' && 'production' || (github.event.inputs.target_env || 'staging') }})
     runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_type == 'tag' && 'production' || (github.event.inputs.target_env || 'staging') }}
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+
+      - name: Set Target Environment Variables
+        id: env-vars
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]] || [[ "${{ github.event.inputs.target_env }}" == "production" ]]; then
+            echo "OVERLAY=gcp-gke" >> $GITHUB_ENV
+            echo "ENV_NAME=production" >> $GITHUB_ENV
+          else
+            echo "OVERLAY=gcp-gke-staging" >> $GITHUB_ENV
+            echo "ENV_NAME=staging" >> $GITHUB_ENV
+          fi
 
       - name: Set up Kustomize
         uses: imranismail/setup-kustomize@v2
 
       - name: Build Kustomize Manifests
         run: |
-          kustomize build deploy/k8s/overlays/${{ github.event.inputs.overlay || 'gcp-gke' }}
+          echo "Building Kustomize overlay for: $OVERLAY (Environment: $ENV_NAME)"
+          kustomize build deploy/k8s/overlays/$OVERLAY

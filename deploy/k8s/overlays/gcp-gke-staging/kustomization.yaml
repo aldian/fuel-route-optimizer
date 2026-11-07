@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: staging
+namePrefix: staging-
+
+resources:
+  - ../../base
+  - backendconfig.yaml
+  - certificate.yaml
+
+patches:
+  - path: ingress_patch.yaml
+
+replicas:
+  - name: fuel-route-optimizer
+    count: 1
