@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fuel-route-optimizer"
+version = "1.0.0"
+description = "Fast, optimal US driving route and fuel cost optimizer built with Django 6.1.3"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "Django==6.1.3",
+    "djangorestframework==3.18.3",
+    "drf-spectacular==0.30.0",
+    "numpy>=2.0.0",
+    "scipy>=1.14.0",
+    "httpx>=0.28.0",
+    "gunicorn>=23.0.0",
+    "whitenoise>=6.8.0",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+DJANGO_SETTINGS_MODULE = "config.settings.test"
+python_files = ["test_*.py", "*_test.py"]
+testpaths = ["tests"]
+addopts = "-v --strict-markers --tb=short"
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["apps"]
+branch = true
+omit = [
+    "apps/*/migrations/*",
+    "apps/*/tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 95.0
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+]
