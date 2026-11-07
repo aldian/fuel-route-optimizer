@@ -12,6 +12,7 @@ urlpatterns = [
     path("", RedirectView.as_view(url="/api/docs/", permanent=False), name="root-redirect"),
     path("admin/", admin.site.urls),
     path("api/v1/", include("apps.api.urls", namespace="api_v1")),
+    path("", include("apps.map_viewer.urls", namespace="map_viewer")),
     # OpenAPI 3.1 documentation endpoints
     path("api/schema/", SpectacularAPIView.as_view(), name="schema"),
     path(

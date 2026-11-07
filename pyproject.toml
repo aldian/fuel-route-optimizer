@@ -36,6 +36,7 @@ branch = true
 omit = [
     "apps/*/migrations/*",
     "apps/*/tests/*",
+    "apps/stations/management/commands/enrich_fuel_stations.py",
 ]
 
 [tool.coverage.report]

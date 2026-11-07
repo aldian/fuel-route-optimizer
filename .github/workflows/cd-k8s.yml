@@ -1,0 +1,33 @@
+name: CD Kubernetes Deployment
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      overlay:
+        description: 'Kubernetes overlay to apply'
+        required: true
+        default: 'gcp-gke'
+        type: choice
+        options:
+          - gcp-gke
+          - aws-eks
+          - azure-aks
+          - generic
+
+jobs:
+  deploy:
+    name: Deploy to Kubernetes (${{ github.event.inputs.overlay || 'gcp-gke' }})
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Build Kustomize Manifests
+        run: |
+          kustomize build deploy/k8s/overlays/${{ github.event.inputs.overlay || 'gcp-gke' }}

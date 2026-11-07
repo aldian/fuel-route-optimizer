@@ -1,0 +1,14 @@
+services:
+  web:
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "8000:8000"
+    environment:
+      - DJANGO_SETTINGS_MODULE=config.settings.local
+      - DJANGO_SECRET_KEY=local-dev-secret-key-37cec3b1487d
+      - ALLOWED_HOSTS=*
+    volumes:
+      - .:/app
+    command: python manage.py runserver 0.0.0.0:8000

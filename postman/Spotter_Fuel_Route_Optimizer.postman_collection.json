@@ -1,0 +1,387 @@
+{
+  "info": {
+    "name": "Spotter Fuel Route Optimizer",
+    "_postman_id": "c7a8b9e0-1234-5678-9abc-def012345678",
+    "description": "Production API Collection for the Spotter Fuel Route Optimizer.\nIncludes automated test assertions, high-contrast accessible visualizer template, and edge cases.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "01. Optimize Route (Coast-to-Coast NYC to LA)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "",
+              "pm.test('External API calls count is optimal (1 call)', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.meta.external_api_calls.total_count).to.be.at.most(3);",
+              "});",
+              "",
+              "pm.test('Fuel stops enforce <= 500 mile vehicle range', function () {",
+              "    var json = pm.response.json();",
+              "    var stops = json.fuel_stops;",
+              "    var prevMile = 0.0;",
+              "    stops.forEach(function(s) {",
+              "        pm.expect(s.route_mile_marker - prevMile).to.be.at.most(500.1);",
+              "        prevMile = s.route_mile_marker;",
+              "    });",
+              "    pm.expect(json.route.total_distance_miles - prevMile).to.be.at.most(500.1);",
+              "});",
+              "",
+              "// Postman Visualizer Template",
+              "var template = `",
+              "<style>",
+              "    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; margin: 16px; color: #000000; background: #f8fafc; }",
+              "    .card { background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }",
+              "    h2, h3 { color: #000000; margin-top: 0; }",
+              "    .metrics { display: flex; gap: 16px; flex-wrap: wrap; margin: 16px 0; }",
+              "    .metric { flex: 1; min-width: 140px; background: #f1f5f9; padding: 14px; border-radius: 6px; border-left: 4px solid #0f4c81; }",
+              "    .metric-val { font-size: 22px; font-weight: bold; color: #0f4c81; }",
+              "    .metric-lbl { font-size: 11px; color: #475569; text-transform: uppercase; font-weight: 600; margin-top: 4px; }",
+              "    table { width: 100%; border-collapse: collapse; margin-top: 12px; background: #fff; }",
+              "    th, td { border: 1px solid #e2e8f0; padding: 10px 12px; text-align: left; color: #000000; font-size: 13px; }",
+              "    th { background: #f8fafc; font-weight: 600; color: #000000; }",
+              "    tr:hover { background: #f1f5f9; }",
+              "    .btn-map { display: inline-block; background: #0f4c81; color: #ffffff !important; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: 600; margin-top: 12px; }",
+              "</style>",
+              "<div class='card'>",
+              "    <h2>Optimal Driving & Fuel Plan</h2>",
+              "    <p><strong>From:</strong> {{response.route.start.resolved_name}} &rarr; <strong>To:</strong> {{response.route.finish.resolved_name}}</p>",
+              "    <div class='metrics'>",
+              "        <div class='metric'><div class='metric-val'>{{response.route.total_distance_miles}} mi</div><div class='metric-lbl'>Total Distance</div></div>",
+              "        <div class='metric'><div class='metric-val'>${{response.fuel_summary.total_money_spent_on_fuel_usd}}</div><div class='metric-lbl'>Total Fuel Spend</div></div>",
+              "        <div class='metric'><div class='metric-val'>${{response.fuel_summary.en_route_pump_cost_usd}}</div><div class='metric-lbl'>Pump Spend En Route</div></div>",
+              "        <div class='metric'><div class='metric-val'>{{response.fuel_summary.number_of_fuel_stops}}</div><div class='metric-lbl'>Optimal Stops</div></div>",
+              "    </div>",
+              "    <a href='{{response.map.map_url}}' target='_blank' class='btn-map'>Open Visual Interactive Map</a>",
+              "</div>",
+              "<div class='card'>",
+              "    <h3>Recommended Fuel Stops</h3>",
+              "    <table>",
+              "        <thead>",
+              "            <tr><th>#</th><th>Truckstop Name</th><th>Location</th><th>Mile</th><th>Price/gal</th><th>Gallons</th><th>Cost</th></tr>",
+              "        </thead>",
+              "        <tbody>",
+              "            {{#each response.fuel_stops}}",
+              "            <tr>",
+              "                <td><strong>{{stop_number}}</strong></td>",
+              "                <td>{{truckstop_name}}</td>",
+              "                <td>{{city}}, {{state}}</td>",
+              "                <td>{{route_mile_marker}} mi</td>",
+              "                <td>${{retail_price_per_gallon_usd}}</td>",
+              "                <td>{{gallons_purchased}} gal</td>",
+              "                <td><strong>${{cost_usd}}</strong></td>",
+              "            </tr>",
+              "            {{/each}}",
+              "        </tbody>",
+              "    </table>",
+              "</div>",
+              "`;",
+              "pm.visualizer.set(template, { response: pm.response.json() });"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start\": \"New York, NY\",\n  \"finish\": \"Los Angeles, CA\",\n  \"vehicle_range_miles\": 500.0,\n  \"mpg\": 10.0,\n  \"include_geojson\": true\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "route",
+            ""
+          ]
+        },
+        "description": "Calculates optimal fuel stops for NYC to LA within 500-mile vehicle range."
+      },
+      "response": []
+    },
+    {
+      "name": "02. Optimize Route (Short Haul - 0 Stops Required)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('0 mandatory stops required for route < 500 miles', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.fuel_summary.number_of_fuel_stops).to.eql(0);",
+              "    pm.expect(json.recommended_cheapest_station).to.not.be.null;",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start\": \"Dallas, TX\",\n  \"finish\": \"Austin, TX\",\n  \"vehicle_range_miles\": 500.0,\n  \"mpg\": 10.0\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "route",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "03. Optimize Route (Street Address Geocoding)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Total external calls <= 3', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.meta.external_api_calls.total_count).to.be.at.most(3);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start\": \"1600 Pennsylvania Ave NW, Washington, DC\",\n  \"finish\": \"233 S Wacker Dr, Chicago, IL\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "route",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "04. Fuel Stations Proximity Search",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Returns nearby stations within radius', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.count).to.be.above(0);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/stations/?lat=41.6528&lng=-83.5379&radius_miles=25.0",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stations",
+            ""
+          ],
+          "query": [
+            {
+              "key": "lat",
+              "value": "41.6528"
+            },
+            {
+              "key": "lng",
+              "value": "-83.5379"
+            },
+            {
+              "key": "radius_miles",
+              "value": "25.0"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "05. Error Validation - Non-US Location Rejection",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 400', function () {",
+              "    pm.response.to.have.status(400);",
+              "});",
+              "pm.test('Standard error code LOCATION_OUTSIDE_USA', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.error.code).to.eql('LOCATION_OUTSIDE_USA');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"start\": \"Toronto, Ontario, Canada\",\n  \"finish\": \"Buffalo, NY\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/route/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "route",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "06. System Health & Readiness",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('System is healthy and index ready', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.status).to.eql('healthy');",
+              "    pm.expect(json.spatial_index_ready).to.eql(true);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/health/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "health",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "07. OpenAPI 3.1 Schema",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/schema/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "schema",
+            ""
+          ]
+        }
+      },
+      "response": []
+    }
+  ]
+}

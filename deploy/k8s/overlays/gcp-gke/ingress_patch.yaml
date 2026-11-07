@@ -1,0 +1,28 @@
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: fuel-optimizer-certificate
+spec:
+  domains:
+    - api.fuel-optimizer.example.com
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fuel-route-optimizer-ingress
+  annotations:
+    kubernetes.io/ingress.class: "gce"
+    networking.gke.io/managed-certificates: "fuel-optimizer-certificate"
+    networking.gke.io/v1beta1.FrontendConfig: "fuel-optimizer-frontendconfig"
+spec:
+  rules:
+    - host: api.fuel-optimizer.example.com
+      http:
+        paths:
+          - path: /*
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: fuel-route-optimizer
+                port:
+                  number: 80

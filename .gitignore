@@ -21,6 +21,7 @@ local_db/
 .env
 .env.*
 !.env.example
+deploy/generated/
 
 # Static & Media files
 staticfiles/

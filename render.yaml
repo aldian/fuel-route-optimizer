@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: fuel-route-optimizer
+    runtime: docker
+    plan: standard
+    region: ohio
+    dockerfilePath: Dockerfile
+    healthCheckPath: /api/v1/health/
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: ALLOWED_HOSTS
+        value: "*"
