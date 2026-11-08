@@ -8,6 +8,7 @@ import secrets
 from typing import Any
 from django.conf import settings
 from django.core.management.base import BaseCommand
+from apps.stations.dns.manager import DNSManager
 
 
 def generate_secure_secret_key() -> str:
@@ -48,6 +49,42 @@ class Command(BaseCommand):
             "--redis-url",
             type=str,
             help="Redis cache URL (e.g. redis://host:6379/0).",
+        )
+        parser.add_argument(
+            "--dns-provider",
+            choices=["none", "route53", "namecheap"],
+            default="none",
+            help="Automated DNS provider for A-record provisioning (route53 or namecheap).",
+        )
+        parser.add_argument(
+            "--dns-target-ip",
+            type=str,
+            help="Target External IP for DNS A-records (if omitted, auto-detected).",
+        )
+        parser.add_argument(
+            "--route53-zone-id",
+            type=str,
+            help="AWS Route 53 Hosted Zone ID.",
+        )
+        parser.add_argument(
+            "--namecheap-api-user",
+            type=str,
+            help="Namecheap API username.",
+        )
+        parser.add_argument(
+            "--namecheap-api-key",
+            type=str,
+            help="Namecheap API key.",
+        )
+        parser.add_argument(
+            "--namecheap-client-ip",
+            type=str,
+            help="Namecheap whitelisted client IP.",
+        )
+        parser.add_argument(
+            "--namecheap-sandbox",
+            action="store_true",
+            help="Use Namecheap Sandbox endpoint.",
         )
         parser.add_argument(
             "--non-interactive",
@@ -164,7 +201,37 @@ class Command(BaseCommand):
             k8s_map = {"1": "gcp-gke", "2": "aws-eks", "3": "azure-aks", "4": "generic", "": "gcp-gke"}
             k8s_provider = k8s_map.get(ans, "gcp-gke")
 
-        # 6. Render Configuration Artifacts
+        # 6. Automated DNS Configuration
+        dns_provider = options.get("dns_provider") or cfg.get("dns_provider", "none")
+        dns_target_ip = options.get("dns_target_ip") or cfg.get("dns_target_ip", "")
+        route53_zone_id = options.get("route53_zone_id") or cfg.get("route53_zone_id", "")
+        nc_user = options.get("namecheap_api_user") or cfg.get("namecheap_api_user", "")
+        nc_key = options.get("namecheap_api_key") or cfg.get("namecheap_api_key", "")
+        nc_client_ip = options.get("namecheap_client_ip") or cfg.get("namecheap_client_ip", "")
+        nc_sandbox = bool(options.get("namecheap_sandbox") or cfg.get("namecheap_sandbox", False))
+
+        if not non_interactive and dns_provider == "none" and domain not in ("localhost", "127.0.0.1"):
+            self.stdout.write("\nAutomated DNS Record Provisioning:")
+            self.stdout.write("  [1] none      : None / Manual DNS Record Setup (Default)")
+            self.stdout.write("  [2] route53   : AWS Route 53 (Automated A-record creation via API)")
+            self.stdout.write("  [3] namecheap : Namecheap DNS (Automated A-record creation via API)")
+            ans = input("Select DNS provider [1-3, default: 1]: ").strip()
+            dns_map = {"1": "none", "none": "none", "": "none", "2": "route53", "route53": "route53", "3": "namecheap", "namecheap": "namecheap"}
+            dns_provider = dns_map.get(ans, "none")
+
+            if dns_provider == "route53":
+                route53_zone_id = input("Route 53 Hosted Zone ID (leave blank to auto-discover): ").strip()
+            elif dns_provider == "namecheap":
+                nc_user = input("Namecheap API User: ").strip()
+                nc_key = getpass.getpass("Namecheap API Key: ").strip()
+                nc_client_ip = input("Namecheap Whitelisted Client IP (default: 127.0.0.1): ").strip() or "127.0.0.1"
+
+            if dns_provider != "none" and not dns_target_ip:
+                detected_ip = DNSManager.detect_public_ip() or "127.0.0.1"
+                ip_ans = input(f"Target Public IP for A-records [default: {detected_ip}]: ").strip()
+                dns_target_ip = ip_ans if ip_ans else detected_ip
+
+        # 7. Render Configuration Artifacts
         env_content = self._render_env_production(
             secret_key=secret_key,
             allowed_hosts=allowed_hosts,
@@ -188,6 +255,9 @@ class Command(BaseCommand):
             # Redact secret key in preview
             redacted_env = re.sub(r"DJANGO_SECRET_KEY=.*", "DJANGO_SECRET_KEY=********[REDACTED]", env_content)
             self.stdout.write(redacted_env)
+            if dns_provider != "none" and domain not in ("localhost", "127.0.0.1"):
+                tip = dns_target_ip or DNSManager.detect_public_ip() or "127.0.0.1"
+                self.stdout.write(self.style.SUCCESS(f"\n[DRY RUN] Would update {dns_provider.upper()} A-records: {domain}, {staging_domain} -> {tip}"))
             self._print_dns_guide(domain, staging_domain, target)
             self.stdout.write(self.style.SUCCESS(f"\n[DRY RUN] Target selected: {target} (K8s: {k8s_provider}). Dry run complete."))
             return
@@ -209,6 +279,26 @@ class Command(BaseCommand):
         if target == "k8s":
             self._patch_k8s_domains(domain, staging_domain)
             self.stdout.write(self.style.SUCCESS("[2.5/3] Patched Kubernetes Ingress & Certificate manifests with domain."))
+
+        if dns_provider != "none" and domain not in ("localhost", "127.0.0.1"):
+            tip = dns_target_ip or DNSManager.detect_public_ip() or "127.0.0.1"
+            dns_cfg = {
+                "dns_provider": dns_provider,
+                "route53_zone_id": route53_zone_id,
+                "namecheap_api_user": nc_user,
+                "namecheap_api_key": nc_key,
+                "namecheap_client_ip": nc_client_ip or "127.0.0.1",
+                "namecheap_sandbox": nc_sandbox,
+            }
+            dns_mgr = DNSManager.from_config(dns_cfg)
+            self.stdout.write(f"\n[2.8/3] Applying automated DNS record updates via {dns_provider.upper()}...")
+            sync_domains = [d for d in [domain, staging_domain] if d and d not in ("localhost", "127.0.0.1")]
+            results = dns_mgr.sync_domains(sync_domains, target_ip=tip)
+            for res in results:
+                if res.success:
+                    self.stdout.write(self.style.SUCCESS(f"  ✓ {res.domain} -> {res.target_ip} ({res.message})"))
+                else:
+                    self.stdout.write(self.style.WARNING(f"  ⚠ {res.domain} -> {res.message}"))
 
         self.stdout.write(self.style.SUCCESS(f"\n[1/3] Successfully wrote {env_path} (mode 0600)."))
         self.stdout.write(self.style.SUCCESS(f"[2/3] Generated GitHub Actions secret helper at {gh_script_path}."))

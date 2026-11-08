@@ -208,11 +208,70 @@ flowchart TD
 
 ---
 
+## 4.3 Automated DNS Record Provisioning (AWS Route 53 & Namecheap API)
+
+To eliminate manual DNS record configuration and achieve true zero-touch deployments, the deploy wizard integrates automated DNS management via `apps/stations/dns/`.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Operator as DevOps / Operator
+    participant Wizard as Deploy Wizard (CLI)
+    participant DNSMgr as DNSManager
+    participant Provider as Route53 / Namecheap API
+    participant Ingress as GKE Ingress / Caddy Proxy
+
+    Operator->>Wizard: ./bin/spotter-deploy (or --dns-provider)
+    Wizard->>DNSMgr: from_config(dns_cfg)
+    Wizard->>DNSMgr: detect_public_ip()
+    DNSMgr-->>Wizard: Auto-detected Target IP (e.g. 203.0.113.10)
+    Wizard->>DNSMgr: sync_domains([prod_domain, staging_domain], target_ip)
+    
+    alt AWS Route 53
+        DNSMgr->>Provider: list_hosted_zones_by_name(root_domain) [if zone omitted]
+        DNSMgr->>Provider: change_resource_record_sets(UPSERT A-records)
+        Provider-->>DNSMgr: ChangeInfo (PENDING -> INSYNC)
+    else Namecheap DNS
+        DNSMgr->>Provider: namecheap.domains.dns.getHosts (Fetch existing records)
+        Note over DNSMgr: Preserves existing MX, TXT, and CNAME records!
+        DNSMgr->>Provider: namecheap.domains.dns.setHosts (Merged A-records)
+        Provider-->>DNSMgr: Status="OK"
+    end
+
+    DNSMgr-->>Wizard: DNSRecordResult(success=True)
+    Wizard->>Ingress: Pointing complete; TLS auto-provisions immediately
+```
+
+### Supported Providers & Safety Mechanisms:
+1. **AWS Route 53 (`Route53DNSProvider`)**:
+   - Executes atomic `UPSERT` actions on target A-records with configurable TTL (default: 300s).
+   - Auto-discovers the AWS Hosted Zone ID if omitted by walking the apex root domain via `list_hosted_zones_by_name`.
+   - Supports explicit IAM credentials or ambient EC2 / EKS IAM role delegation (`boto3`).
+
+2. **Namecheap DNS (`NamecheapDNSProvider`)**:
+   - Resolves Namecheap's destructive `setHosts` behavior (which clears unmentioned hosts) by executing a read-modify-write cycle: first fetches all existing records via `getHosts`, preserves all MX, TXT, and non-conflicting records, merges updated/new A-records, and commits via `setHosts`.
+   - Supports both Namecheap Production (`api.namecheap.com`) and Sandbox (`api.sandbox.namecheap.com`) endpoints.
+   - Whitelisted `ClientIp` validation with auto-detection via `api.ipify.org`.
+
+3. **CLI Arguments & Non-Interactive Flags**:
+   - `--dns-provider`: `none` (default), `route53`, or `namecheap`.
+   - `--dns-target-ip`: External Load Balancer or VPS public IPv4 address (auto-detected if omitted).
+   - `--route53-zone-id`: AWS Route 53 Hosted Zone ID (optional; auto-discovered if blank).
+   - `--namecheap-api-user`: Namecheap API user.
+   - `--namecheap-api-key`: Namecheap API key / token.
+   - `--namecheap-client-ip`: Namecheap whitelisted caller IP.
+   - `--namecheap-sandbox`: Flag to target Namecheap sandbox environment.
+
+---
+
 ## 5. Testing Requirements for the Deployment CLI & CI/CD Manifests
 
 In accordance with `REQ-QUAL-001` (`>= 95%` unit test coverage) and `REQ-QUAL-002` (E2E testing):
-1. **Unit Tests (`tests/unit/test_deploy_wizard.py` — `>= 95%` coverage)**:
+1. **Unit Tests (`tests/unit/test_deploy_wizard.py` and `tests/unit/test_dns_providers.py` — `>= 95%` coverage)**:
    - Tests interactive prompt validation (domain validation, secret entropy validation, PostgreSQL/Redis URL validation, worker count bounds) using simulated `io.StringIO` streams and `--non-interactive` flags.
    - Verifies `.env.production` generation (`0600` permissions), cryptographic `DJANGO_SECRET_KEY` auto-generation, `terraform.tfvars` rendering across all cloud targets (`aws`, `gcp`, `azure`, `k8s`, `docker-vps`, `paas`), and `--dry-run` safety (zero filesystem writes in dry-run mode).
+   - Verifies AWS Route 53 UPSERT, Hosted Zone auto-discovery, and error recovery (`tests/unit/test_dns_providers.py`).
+   - Verifies Namecheap XML `getHosts` record preservation, `setHosts` payload formatting, and authentication error handling.
+   - Verifies public IP auto-detection and multi-domain batch synchronization across production and staging hostnames.
 2. **End-to-End Tests (`tests/e2e/test_deploy_wizard_e2e.py`)**:
    - **`TC-E2E-11` (Zero-to-Production Wizard Full Lifecycle E2E)**: Invokes `python manage.py deploy_wizard` in an isolated temporary workspace from zero, generates `.env.production` and target deployment configs, boots the application with the generated production configuration (`config.settings.production`), and verifies `python manage.py check --deploy` passes with `0` errors and `/api/v1/health/` + `/api/v1/route/` respond accurately.

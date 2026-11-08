@@ -102,6 +102,7 @@ def test_deploy_wizard_interactive_and_production_write(tmp_path: Path) -> None:
     # 5. database url = "postgresql://user:pass@db:5432/app"
     # 6. redis url = "redis://redis:6379/0"
     # 7. k8s provider = "1" (gcp-gke)
+    # 8. dns provider = "1" (none)
     inputs = [
         "5",  # k8s
         "api.example.com",  # domain
@@ -110,6 +111,7 @@ def test_deploy_wizard_interactive_and_production_write(tmp_path: Path) -> None:
         "postgresql://user:pass@db:5432/app",  # db url
         "redis://redis:6379/0",  # redis url
         "1",  # gcp-gke
+        "1",  # dns provider: none
     ]
 
     out = StringIO()

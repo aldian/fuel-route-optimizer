@@ -7,8 +7,9 @@ drf-spectacular==0.30.0
 numpy>=2.0.0
 scipy>=1.14.0
 
-# Resilient HTTP Client (OSRM & External Geocoders)
+# Resilient HTTP Client & Cloud SDKs
 httpx>=0.28.0
+boto3>=1.34.0
 
 # Production WSGI & Static Assets
 gunicorn>=23.0.0

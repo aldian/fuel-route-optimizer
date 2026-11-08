@@ -254,11 +254,31 @@ python manage.py deploy_wizard --interactive
 ```
 
 The wizard guides administrators through:
-- Target cloud platform selection (GCP GKE, AWS ECS, Azure AKS, VPS Docker, Fly.io, Render).
-- Generating high-entropy Django `SECRET_KEY`.
-- Configuring `ALLOWED_HOSTS` and CORS origins.
-- Connecting PostgreSQL and Redis caching.
-- Generating `.env.production` and GitHub Actions secrets automation scripts.
+- **Target Cloud Platform**: GCP GKE, AWS EKS/ECS, Azure AKS, VPS Docker, Fly.io, Render.
+- **Domain & Staging Hostnames**: Configures production and staging hostnames, updating Kubernetes Ingress, GKE `ManagedCertificate`, and Django `ALLOWED_HOSTS`.
+- **Automated DNS Provisioning (AWS Route 53 & Namecheap API)**:
+  - Eliminates manual DNS changes by automatically provisioning `A` records pointing to your External Load Balancer or VPS public IP.
+  - **AWS Route 53**: Performs atomic `UPSERT` actions and automatically discovers Hosted Zone IDs.
+  - **Namecheap DNS**: Queries `getHosts` first to preserve existing MX/TXT/CNAME records, then executes atomic `setHosts`.
+  - **Auto-IP Detection**: Detects public outbound IPv4 address via `api.ipify.org` if target IP is not specified.
+  - Non-interactive automation flags: `--dns-provider [route53|namecheap]`, `--dns-target-ip`, `--route53-zone-id`, `--namecheap-api-user`, `--namecheap-api-key`, `--namecheap-client-ip`.
+- **High-Entropy Secrets**: Generates cryptographically secure 64-character Django `SECRET_KEY`.
+- **PostgreSQL & Redis Wiring**: Validates database and cache connection URIs.
+- **Configuration Output**: Generates `.env.production` (permissions `0600`) and ready-to-run GitHub Actions secret upload script (`deploy/generated/set_github_secrets.sh`).
+
+### 7.2 Non-Interactive Automation Example
+```bash
+./bin/spotter-deploy \
+  --target k8s \
+  --domain api.fuel-optimizer.example.com \
+  --staging-domain staging-api.fuel-optimizer.example.com \
+  --dns-provider route53 \
+  --route53-zone-id Z1234567890ABC \
+  --dns-target-ip 34.120.55.80 \
+  --database-url postgresql://dbuser:securepass@10.0.0.5:5432/fueldb \
+  --redis-url redis://10.0.0.6:6379/0 \
+  --non-interactive
+```
 
 ### 7.2 Multi-Cloud Deployment Artifacts
 - **Docker Compose + Caddy**: `docker-compose.prod.yml` and `deploy/caddy/Caddyfile` for single-node VPS with automated Let's Encrypt SSL.
