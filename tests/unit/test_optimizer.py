@@ -123,3 +123,74 @@ def test_route_projector_densify_and_projection() -> None:
     assert len(densified) == len(mileages)
     assert mileages[0] == 0.0
     assert mileages[-1] > 80.0
+
+
+def test_refuel_solver_lp_oracle_equivalence() -> None:
+    """TC-OPT-06: Verify MinCostRefuelSolver matches scipy.optimize.linprog exact LP solution."""
+    import random
+    import numpy as np
+    from scipy.optimize import linprog
+
+    rng = random.Random(42)
+    solver = MinCostRefuelSolver()
+    spec = VehicleSpec(max_range_miles=500.0, mpg=10.0, initial_fuel_gallons=50.0)
+    cap = spec.tank_capacity_gallons  # 50.0 gal
+
+    for trial in range(25):
+        total_dist = float(rng.randint(600, 2200))
+        # Place stations every 100..250 miles so route is always feasible
+        positions: list[float] = []
+        pos = float(rng.randint(100, 250))
+        while pos < total_dist:
+            positions.append(pos)
+            pos += float(rng.randint(100, 250))
+
+        n = len(positions)
+        prices = [round(rng.uniform(2.50, 4.80), 3) for _ in range(n)]
+        stations = [
+            ProjectedStation(
+                station=make_indexed_station(i + 1, f"St {i+1}", f"{prices[i]:.3f}", 35.0, -100.0),
+                route_mile_marker=positions[i],
+                off_route_distance_miles=0.0,
+                effective_price=prices[i],
+            )
+            for i in range(n)
+        ]
+
+        plan = solver.solve(total_distance_miles=total_dist, stations=stations, spec=spec)
+        dp_cost = float(plan.en_route_pump_cost_usd)
+
+        # Formulate exact Linear Program: minimize c^T x subject to tank bounds at every station & destination
+        # At station i (0-indexed), cumulative fuel burned is B_i = positions[i] / 10.0
+        # Before fueling at i: sum_{j < i} x_j >= B_i - f0  =>  -sum_{j < i} x_j <= f0 - B_i
+        # After fueling at i:  sum_{j <= i} x_j <= cap + B_i - f0
+        # At destination:      sum_{j < n} x_j >= B_dest - f0  => -sum_{j < n} x_j <= f0 - B_dest
+        a_ub: list[list[float]] = []
+        b_ub: list[float] = []
+        f0 = spec.initial_fuel_gallons
+
+        for i in range(n):
+            burned_i = positions[i] / spec.mpg
+            # Lower bound before fueling at i
+            row_low = [-1.0 if j < i else 0.0 for j in range(n)]
+            a_ub.append(row_low)
+            b_ub.append(f0 - burned_i)
+
+            # Upper bound after fueling at i
+            row_high = [1.0 if j <= i else 0.0 for j in range(n)]
+            a_ub.append(row_high)
+            b_ub.append(cap + burned_i - f0)
+
+        burned_dest = total_dist / spec.mpg
+        a_ub.append([-1.0 for _ in range(n)])
+        b_ub.append(f0 - burned_dest)
+
+        res = linprog(
+            c=np.array(prices, dtype=np.float64),
+            A_ub=np.array(a_ub, dtype=np.float64),
+            b_ub=np.array(b_ub, dtype=np.float64),
+            bounds=[(0.0, cap) for _ in range(n)],
+            method="highs",
+        )
+        assert res.success, f"LP failed on trial {trial}"
+        assert abs(dp_cost - float(res.fun)) <= 0.05, f"Trial {trial}: DP={dp_cost} vs LP={res.fun}"

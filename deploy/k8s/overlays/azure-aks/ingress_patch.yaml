@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fuel-route-optimizer-ingress
+  annotations:
+    kubernetes.io/ingress.class: "azure/application-gateway"
+    appgw.ingress.kubernetes.io/health-probe-path: "/api/v1/health/"
+spec:
+  rules:
+    - host: api.fuel-optimizer.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fuel-route-optimizer
+                port:
+                  number: 80

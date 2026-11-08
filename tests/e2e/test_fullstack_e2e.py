@@ -308,3 +308,45 @@ def test_tc_e2e_06_concurrent_requests_stress(live_server) -> None:
     status_codes = asyncio.run(run_concurrent())
     assert len(status_codes) == 20
     assert all(code == 200 for code in status_codes)
+
+
+@pytest.mark.django_db(transaction=True)
+def test_tc_e2e_11_deploy_wizard_sre_and_destroy_lifecycle(live_server) -> None:
+    """TC-E2E-11: End-to-End Zero-to-Production Wizard -> Live SRE SLA Check -> Ephemeral Demo Teardown."""
+    import io
+    from unittest.mock import patch
+    from django.conf import settings
+
+    # 1. Run deploy_wizard in non-interactive mode
+    out_deploy = io.StringIO()
+    call_command(
+        "deploy_wizard",
+        target="docker-vps",
+        domain="api.e2e-demo.example.com",
+        staging_domain="staging-api.e2e-demo.example.com",
+        secret_key="e2e-super-secret-production-key-37cec3b1487d-long-enough",
+        non_interactive=True,
+        stdout=out_deploy,
+    )
+    assert (settings.BASE_DIR / ".env.production").exists()
+    assert (settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json").exists()
+
+    # 2. Query live_server /api/v1/sre/sla/ and /api/v1/sre/metrics/ over TCP
+    with httpx.Client(base_url=live_server.url, timeout=10.0) as client:
+        sla_resp = client.get("/api/v1/sre/sla/")
+        assert sla_resp.status_code == 200
+        sla_json = sla_resp.json()
+        assert "overall_status" in sla_json
+        assert len(sla_json["slos"]) == 6
+
+        prom_resp = client.get("/api/v1/sre/metrics/")
+        assert prom_resp.status_code == 200
+        assert "spotter_sla_compliant" in prom_resp.text
+
+    # 3. Tear down demo artifacts with destroy_deployment
+    out_destroy = io.StringIO()
+    with patch("subprocess.run"):
+        call_command("destroy_deployment", yes=True, stdout=out_destroy)
+
+    assert not (settings.BASE_DIR / ".env.production").exists()
+    assert not (settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json").exists()
