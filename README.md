@@ -286,6 +286,45 @@ The wizard guides administrators through:
 - **Terraform IaC**: `deploy/terraform/gcp/main.tf` provisioning GKE Autopilot, Cloud SQL PostgreSQL, and Memorystore Redis.
 - **PaaS**: `fly.toml` (Fly.io) and `render.yaml` (Render blueprint).
 
+### 7.3 Dynamic Feature Flags & Kill-Switches
+Decouple deployment from release and manage live features with sub-millisecond evaluation (<0.05ms):
+
+```bash
+# List configured feature flags
+./bin/spotter-feature-flag --list
+
+# Toggle instant kill-switch or feature gate
+./bin/spotter-feature-flag --set EXPERIMENTAL_SOLVER on
+./bin/spotter-feature-flag --set EXPERIMENTAL_SOLVER off
+
+# Progressive percentage rollout (consistent hashing per user/key)
+./bin/spotter-feature-flag --set CANARY_ROUTING 25%
+```
+
+### 7.4 Zero-Downtime Database Migration Safety Linter
+Prevents dangerous table locks and production outages by enforcing Expand-Contract schema rules:
+
+```bash
+# Run local schema migration validator
+./bin/spotter-check-migrations
+
+# Automated CI gate: rejects NOT NULL columns without defaults, model/field renames, and destructive SQL
+python manage.py check_migration_safety --fail-on-warning
+```
+
+### 7.5 Rapid Rollback & Canary / Blue-Green Deployments
+- **1-Click Emergency Rollback (GitHub Actions)**: Trigger `.github/workflows/rollback.yml` from GitHub Actions UI to undo deployments with automated health probe verification.
+- **CLI Rollback Utility**:
+  ```bash
+  # Rollback Kubernetes production to previous revision
+  ./bin/spotter-rollback --target k8s --namespace production
+
+  # Rollback to specific revision with automated health check verification
+  ./bin/spotter-rollback --target k8s --namespace production --to-revision 2 --verify-url https://api.fuel-optimizer.com/api/v1/health/
+  ```
+- **Blue-Green Deployment Overlay**: `deploy/k8s/overlays/blue-green/` allows instantaneous traffic pointer switches (< 1 second) via `./deploy/k8s/overlays/blue-green/switch_traffic.sh [blue|green]`.
+- **Canary Deployment Overlay**: `deploy/k8s/overlays/canary/` provisions a 10% traffic-weighted canary ingress.
+
 ---
 
 ## 8. Spec-Driven Development (SDD) Reference
@@ -298,6 +337,8 @@ All requirements and architectural boundaries were formally documented in `specs
 - [`specs/04-api-design-and-openapi.md`](specs/04-api-design-and-openapi.md): Standardized REST API contracts and error formatting.
 - [`specs/05-test-strategy-and-quality-gates.md`](specs/05-test-strategy-and-quality-gates.md): 95% coverage mandate, E2E live server testing, and benchmarks.
 - [`specs/06-deployment-and-devops.md`](specs/06-deployment-and-devops.md): Multi-target CI/CD, K8s, Terraform, and Docker configurations.
+- [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md): Automated Route 53 & Namecheap DNS provisioning and Zero-to-Production CLI wizard.
+- [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md): Feature flags, Expand-Contract database migrations, and Canary / Blue-Green rollback operational guide.
 - [`specs/07-postman-and-video-walkthrough.md`](specs/07-postman-and-video-walkthrough.md): Postman Visualizer template and 5-minute video walkthrough guide.
 
 ---

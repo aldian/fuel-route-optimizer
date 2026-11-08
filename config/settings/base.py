@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     "rest_framework",
     "drf_spectacular",
     # Project apps
+    "apps.common.apps.CommonConfig",
     "apps.stations.apps.StationsConfig",
     "apps.routing.apps.RoutingConfig",
     "apps.optimizer.apps.OptimizerConfig",
@@ -176,3 +177,10 @@ ORS_API_KEY = os.environ.get("ORS_API_KEY", "")
 # Upstream socket timeouts (seconds)
 EXTERNAL_CONNECT_TIMEOUT_SEC = float(os.environ.get("EXTERNAL_CONNECT_TIMEOUT_SEC", "2.0"))
 EXTERNAL_READ_TIMEOUT_SEC = float(os.environ.get("EXTERNAL_READ_TIMEOUT_SEC", "4.0"))
+
+# Feature Flags (Defaults)
+FEATURE_FLAGS = {
+    "CANARY_ROUTING": False,
+    "EXPERIMENTAL_SOLVER": False,
+}
+

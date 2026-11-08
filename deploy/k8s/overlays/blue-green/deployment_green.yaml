@@ -1,0 +1,37 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fuel-route-optimizer-green
+  labels:
+    app.kubernetes.io/name: fuel-route-optimizer
+    version: green
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fuel-route-optimizer
+      version: green
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fuel-route-optimizer
+        version: green
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/aldian/fuel-route-optimizer:green
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+              name: http
+          envFrom:
+            - secretRef:
+                name: fuel-optimizer-secrets
+            - configMapRef:
+                name: fuel-optimizer-config
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health/
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5

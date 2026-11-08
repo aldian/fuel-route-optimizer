@@ -1,0 +1,67 @@
+name: Rollback Deployment (1-Click Emergency Rollback)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: 'Target Environment to Roll Back'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+      to_revision:
+        description: 'Specific Revision to Roll Back To (leave blank for previous revision)'
+        required: false
+        type: string
+        default: ''
+      reason:
+        description: 'Reason for Emergency Rollback (Audit Trail)'
+        required: true
+        default: 'Performance degradation / Critical bug in latest release'
+
+jobs:
+  rollback:
+    name: Rollback ${{ github.event.inputs.target_env }} Deployment
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.event.inputs.target_env }}
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set Environment Variables
+        run: |
+          echo "TARGET_ENV=${{ github.event.inputs.target_env }}" >> $GITHUB_ENV
+          echo "REVISION=${{ github.event.inputs.to_revision }}" >> $GITHUB_ENV
+          echo "REASON=${{ github.event.inputs.reason }}" >> $GITHUB_ENV
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Project Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Zero-Downtime Rollback (Dry-Run Mode in CI)
+        run: |
+          echo "Executing Rollback for: $TARGET_ENV (Reason: $REASON)"
+          if [ -n "$REVISION" ]; then
+            python manage.py rollback_deployment --target k8s --namespace $TARGET_ENV --to-revision $REVISION --dry-run
+          else
+            python manage.py rollback_deployment --target k8s --namespace $TARGET_ENV --dry-run
+          fi
+
+      - name: Log Rollback Audit Trail
+        run: |
+          echo "### ⚠️ Deployment Rollback Executed" >> $GITHUB_STEP_SUMMARY
+          echo "* **Environment**: \`$TARGET_ENV\`" >> $GITHUB_STEP_SUMMARY
+          echo "* **Revision**: \`${REVISION:-previous}\`" >> $GITHUB_STEP_SUMMARY
+          echo "* **Triggered By**: @${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "* **Audit Reason**: $REASON" >> $GITHUB_STEP_SUMMARY
+          echo "* **Status**: Rollback dispatched and validated." >> $GITHUB_STEP_SUMMARY

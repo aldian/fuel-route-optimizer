@@ -78,6 +78,7 @@ def test_unhandled_exception_returns_none() -> None:
 
 def test_app_configs_installed() -> None:
     app_names = [
+        "apps.common",
         "apps.stations",
         "apps.routing",
         "apps.optimizer",

@@ -28,7 +28,7 @@ jobs:
 
       - name: Python Syntax Check
         run: |
-          python -m py_compile manage.py config/urls.py config/settings/*.py apps/*/*.py
+          python -m py_compile manage.py config/urls.py config/settings/*.py apps/*/*.py apps/common/*.py
 
       - name: Django System & Production Deployment Check
         env:
@@ -36,6 +36,13 @@ jobs:
           DJANGO_SECRET_KEY: test-secret-key-37cec3b1487d
         run: |
           python manage.py check
+
+      - name: Validate Database Schema Migration Safety (Zero-Downtime Check)
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings.local
+          DJANGO_SECRET_KEY: test-secret-key-37cec3b1487d
+        run: |
+          python manage.py check_migration_safety
 
       - name: OpenAPI 3.1 Schema Validation
         env:
