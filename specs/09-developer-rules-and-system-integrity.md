@@ -6,19 +6,25 @@
 
 ---
 
-## 1. Purpose & Core Tenets
+## 1. Purpose & Core Tenets: Spec-Driven Development (SDD)
 
-To ensure the long-term reliability, low-latency performance ($< 15\text{ ms}$), and zero-downtime availability of the **Spotter Fuel Route Optimizer**, all contributors must strictly adhere to this standard. System integrity is not an afterthought; it is actively validated on every commit and PR.
+To ensure the long-term reliability, low-latency performance ($< 15\text{ ms}$), and zero-downtime availability of the **Spotter Fuel Route Optimizer**, this project is openly developed using **Spec-Driven Development (SDD)**.
+
+> [!IMPORTANT]
+> **`specs/` Is the Authoritative Single Source of Truth**
+> The specification files in [`specs/`](./README.md) are the single source of truth for the entire system. Specifically:
+> 1. **Feature Flags Originate in `specs/` ([Spec 08](./08-feature-flags-and-zero-downtime-database-migrations.md))**: Every behavioral or algorithmic change defines its feature flag and fallback behavior in `specs/08-feature-flags-and-zero-downtime-database-migrations.md` first, enabling `< 0.1s` feature rollback (`./bin/spotter-feature-flag disable <flag_name>`) without redeploying containers.
+> 2. **Database Schema Rules Originate in `specs/` ([Spec 02 §6](./02-data-pipeline-and-schema.md) & [Spec 08 §3](./08-feature-flags-and-zero-downtime-database-migrations.md))**: Because rolling back a production database with live data risks data loss and lock contention, every schema change is designed in `specs/` using the **Expand-Contract** pattern (`RULE-MIG-01`..`06`). This guarantees that rolling back application code (`./bin/spotter-rollback`) works seamlessly without rolling back the database.
 
 ```mermaid
 flowchart TD
-    subgraph CoreTenets ["Core Tenets"]
-        T1["1. Spec-Driven Development (SDD)"]
-        T2["2. Non-Negotiable Test Gate (>= 95%)"]
-        T3["3. Zero-Downtime Database Migrations (Expand-Contract)"]
-        T4["4. Hard External API Call Budget (<= 3 Calls)"]
-        T5["5. Domestic US Boundary Ray-Casting"]
-        T6["6. Decoupled Releases via Feature Flags"]
+    subgraph CoreTenets ["Core Tenets (specs/ as Single Source of Truth)"]
+        T1["1. Spec-Driven Development (specs/ First)"]
+        T2["2. Feature Flags in Specs for < 0.1s Rollback"]
+        T3["3. Expand-Contract Schema Rules (RULE-MIG-01..06)"]
+        T4["4. Non-Negotiable Test Gate (>= 95% Coverage)"]
+        T5["5. Hard External API Call Budget (<= 3 Calls)"]
+        T6["6. Domestic US Boundary Ray-Casting"]
     end
 ```
 
@@ -87,7 +93,7 @@ graph TD
 ## 4. Operational Emergency Hierarchy
 
 If an error or degradation occurs in production:
-1. **Level 1 (Feature Kill-Switch)**: `./bin/spotter-feature-flag --set FEATURE_NAME off` (< 0.1s, no restarts).
-2. **Level 2 (Blue-Green Pointer Switch)**: `./deploy/k8s/overlays/blue-green/switch_traffic.sh blue production` (< 1s).
+1. **Level 1 (Feature Kill-Switch)**: `./bin/spotter-feature-flag disable <flag_name>` (`< 0.1s`, no restarts or database touch).
+2. **Level 2 (Blue-Green Pointer Switch)**: `./bin/spotter-rollback --target k8s-blue-green --namespace production` (`~1s`).
 3. **Level 3 (1-Click GitHub Actions Rollback)**: Trigger `.github/workflows/rollback.yml`.
-4. **Level 4 (CLI Rollback)**: `./bin/spotter-rollback --target k8s --namespace production`.
+4. **Level 4 (CLI Rollback)**: `./bin/spotter-rollback --target k8s-canary --namespace production`.

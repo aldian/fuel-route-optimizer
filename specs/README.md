@@ -15,28 +15,36 @@ This directory contains the authoritative engineering specifications for the **U
 | [04-fuel-optimization-algorithm.md](./04-fuel-optimization-algorithm.md) | Formal mathematical formulation (`500`-mile max range, `10` MPG, `50`-gallon capacity), polyline mile-marker projection, detour modeling, exact minimum-cost refueling solver, and fuel cost accounting. |
 | [05-api-contract-and-map-delivery.md](./05-api-contract-and-map-delivery.md) | REST API endpoints, request/response JSON schemas, GeoJSON `FeatureCollection`, encoded polyline, self-contained interactive map view, error catalog, and Postman integration. |
 | [06-testing-verification-and-delivery-plan.md](./06-testing-verification-and-delivery-plan.md) | `>= 95%` unit test coverage gate, integration, LP-oracle property, full-stack & live-browser End-to-End (E2E) test suites, performance benchmarks, phased roadmap, and 5-minute Loom blueprint. |
-| [07-cicd-and-production-deployment-cli.md](./07-cicd-and-production-deployment-cli.md) | Multi-target CI/CD pipelines (AWS, GCP, Azure, Kubernetes, VPS Docker/Caddy, PaaS), Terraform IaC, and interactive zero-to-production `deploy_wizard` CLI. |
+| [07-cicd-and-production-deployment-cli.md](./07-cicd-and-production-deployment-cli.md) | Multi-target CI/CD pipelines (AWS, GCP, Azure, Kubernetes, VPS Docker/Caddy, PaaS), Terraform IaC, automated Route 53 & Namecheap DNS provisioning, and interactive zero-to-production `deploy_wizard` CLI. |
+| [08-feature-flags-and-zero-downtime-database-migrations.md](./08-feature-flags-and-zero-downtime-database-migrations.md) | Sub-millisecond dynamic feature flags, Expand-Contract zero-downtime database migration rules (`RULE-MIG-01`..`06`), Canary/Blue-Green traffic splitting, and 1-click emergency rollbacks. |
+| [09-developer-rules-and-system-integrity.md](./09-developer-rules-and-system-integrity.md) | The 6 non-negotiable automated quality gates, SDD rules of engagement, and contributor governance. |
 
 ---
 
 ## 2. Spec-Driven Development (SDD) Workflow
 
-All development in this repository follows a strict specification-first lifecycle. No production feature code is merged unless mapped to an explicit requirement ID (`REQ-*`) and verified against acceptance tests.
+All development in this repository follows a strict specification-first lifecycle. **The files in `specs/` are the authoritative single source of truth.** No production feature code or database migration is merged unless specified in `specs/` first, mapped to an explicit requirement ID (`REQ-*`), gated behind a feature flag when introducing new behavior, and verified against automated schema-safety and acceptance tests.
 
 ```mermaid
 flowchart LR
     A["1. Requirement Analysis (Assessment + CSV Audit)"] --> B["2. Formal Specifications (specs/*.md + ADRs)"]
-    B --> C["3. Offline Data Enrichment (Pre-Geocoded US Stations)"]
-    C --> D["4. Test-First Implementation (>= 95% Unit Coverage)"]
-    D --> E["5. Full-Stack & Live E2E + SLA Verification (<= 3 Calls)"]
-    E --> F["6. Postman & Loom Delivery"]
+    B --> C["3. Feature Flag & Expand-Contract Schema Spec"]
+    C --> D["4. Test-First Implementation (>= 95% Coverage)"]
+    D --> E["5. CI Schema Linter + Live E2E Verification"]
+    E --> F["6. Canary / Blue-Green Release & Instant Rollback Ready"]
 ```
 
 ### SDD Governance Rules
-1. **Spec as Source of Truth**: Any change to API schemas, fuel cost formulas, or deduplication behavior must update the corresponding file in `specs/` first.
-2. **Traceability**: Every module, serializer, service, and test suite links back to `REQ-*` identifiers defined in Section 3.
-3. **Deterministic Reproducibility**: Cloning the repository, installing pinned dependencies, running migrations, and loading pre-enriched station fixtures must succeed offline in under 5 seconds without requiring paid API keys.
-4. **Mandatory Coverage & E2E Quality Gates**: Unit tests must maintain **at least `95%` coverage** (`--cov-fail-under=95`), and full **End-to-End (E2E) tests** (spanning cold-start seeding, real `live_server` HTTP calls, live upstream routing/geocoding verification, and headless browser interactive map rendering) must pass before any milestone is marked complete.
+1. **Spec Files as Single Source of Truth**: Every architectural boundary, API contract, fuel optimization formula, feature flag, and database schema change must be authored or updated in `specs/` **before** application code is written or modified. Code is strictly a downstream realization of these specifications.
+2. **Feature Flags for Instant Feature Rollback**: Every new capability or experimental heuristic defined in `specs/` must specify its feature flag identifier (`apps/common/flags.py`), default value, consistent-hashing percentage rollout behavior, and fallback path. This decouples code deployment from feature release and allows operators to roll back any feature in `< 0.1 s` (`./bin/spotter-feature-flag --set <FLAG> off`) without redeploying containers.
+3. **Strict Database Schema Rules (Expand-Contract) for Safe Release Rollback**: Rolling back a relational database in production once live data has been written is dangerous and risks table locks or data loss. Therefore, all schema changes specified in `specs/` must obey the **Expand-Contract (Parallel Run)** pattern (`RULE-MIG-01` through `RULE-MIG-06` in [08-feature-flags-and-zero-downtime-database-migrations.md](./08-feature-flags-and-zero-downtime-database-migrations.md)), enforced in CI by `python manage.py check_migration_safety`:
+   - Never add a `NOT NULL` column without a `default`.
+   - Never drop (`RemoveField`) or rename (`RenameField` / `RenameModel`) an active column or table in the same release as code changes.
+   - Never run destructive raw SQL (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`).
+   - Every database migration must remain **100% backward-compatible with code version $N-1$**, ensuring that Canary, Blue-Green, or `kubectl rollout undo` code rollbacks succeed immediately without rolling back the database schema.
+4. **Traceability**: Every module, serializer, service, and test suite links back to `REQ-*` identifiers defined in Section 3.
+5. **Deterministic Reproducibility**: Cloning the repository, installing pinned dependencies, running migrations, and loading pre-enriched station fixtures must succeed offline in under 5 seconds without requiring paid API keys.
+6. **Mandatory Coverage & E2E Quality Gates**: Unit tests must maintain **at least `95%` coverage** (`--cov-fail-under=95`), and full **End-to-End (E2E) tests** (spanning cold-start seeding, real `live_server` HTTP calls, live upstream routing/geocoding verification, and interactive map rendering) must pass before any milestone is marked complete.
 
 ---
 
@@ -60,6 +68,9 @@ Every explicit and implicit requirement from the assessment specification is dec
 | `REQ-QUAL-002` | *Engineering Quality Mandate — End-to-End (E2E) Testing* | Maintain a comprehensive multi-tier **End-to-End (E2E) test suite** exercising cold-start DB seeding, real WSGI/ASGI `live_server` TCP traffic, concurrent clients, live upstream routing/geocoding APIs, and headless browser interactive map rendering. | [06-testing-verification-and-delivery-plan.md](./06-testing-verification-and-delivery-plan.md) |
 | `REQ-OPS-001` | *Engineering Quality Mandate — Multi-Target CI/CD & IaC* | Provide GitHub Actions CI/CD workflows and declarative Infrastructure-as-Code (Terraform, Kubernetes, Docker Compose + Caddy TLS, and PaaS blueprints) for 6 production deployment targets. | [07-cicd-and-production-deployment-cli.md](./07-cicd-and-production-deployment-cli.md) |
 | `REQ-OPS-002` | *Engineering Quality Mandate — Zero-to-Production Interactive CLI* | Provide an interactive CLI wizard (`python manage.py deploy_wizard` / `./bin/spotter-deploy`) that prompts operators for target platform, domain, secret keys (`DJANGO_SECRET_KEY`), DB/Redis URLs, and cloud settings, runs pre-flight checks, and generates hardened deployment configs. | [07-cicd-and-production-deployment-cli.md](./07-cicd-and-production-deployment-cli.md) |
+| `REQ-OPS-003` | *Engineering Quality Mandate — Automated DNS Record Provisioning* | Eliminate manual DNS record configuration by supporting automated A-record creation/updates via **AWS Route 53** (`boto3` atomic `UPSERT`) and **Namecheap** (`getHosts` record preservation + `setHosts`) APIs in `deploy_wizard`. | [07-cicd-and-production-deployment-cli.md](./07-cicd-and-production-deployment-cli.md) |
+| `REQ-OPS-004` | *Engineering Quality Mandate — Dynamic Feature Flags & Instant Rollbacks* | Decouple code deployment from feature release via a `< 0.05 ms` feature flag subsystem (`apps/common/flags.py` + `./bin/spotter-feature-flag`) alongside Canary, Blue-Green, CLI (`./bin/spotter-rollback`), and 1-Click GitHub Actions (`rollback.yml`) rollbacks. | [08-feature-flags-and-zero-downtime-database-migrations.md](./08-feature-flags-and-zero-downtime-database-migrations.md) |
+| `REQ-OPS-005` | *Engineering Quality Mandate — Zero-Downtime Expand-Contract Database Schema Rules* | Enforce backward-compatible database migrations (`RULE-MIG-01` through `RULE-MIG-06`) via `python manage.py check_migration_safety` in CI so production feature or release rollbacks never require risky database rollbacks. | [08-feature-flags-and-zero-downtime-database-migrations.md](./08-feature-flags-and-zero-downtime-database-migrations.md), [02-data-pipeline-and-schema.md](./02-data-pipeline-and-schema.md) |
 
 ---
 
@@ -77,6 +88,8 @@ Every explicit and implicit requirement from the assessment specification is dec
 | **End-to-End API Latency** | `< 20 ms` cached; `< 350 ms` uncached city-to-city | Persistent `httpx.Client` connection pooling + parallel endpoint geocoding when needed. |
 | **Monetary Precision** | Exact `Decimal` output rounded to `$0.01` (`0.001` gal precision) | `decimal.Decimal` (`ROUND_HALF_UP`) for all financial rollups. |
 | **Zero Secret / Key Barrier** | Works out-of-the-box after `git clone` | Pre-geocoded station fixture committed; default OSRM + OSM + Census/Photon adapters require zero paid keys. |
+| **Database Schema Backward Compatibility** | `100%` Expand-Contract compliance ($N-1$ compatible) | Automated CI gate via `python manage.py check_migration_safety` (`./bin/spotter-check-migrations`). |
+| **Feature & Release Rollback Time** | `< 0.1 s` (Feature Flag) / `< 1 s` (Blue-Green switch) | `./bin/spotter-feature-flag`, `switch_traffic.sh`, and `./bin/spotter-rollback`. |
 
 ---
 
@@ -111,3 +124,10 @@ Every explicit and implicit requirement from the assessment specification is dec
 * **Context**: *"Return a map of the route along with optimal location to fuel up along the route"* is tested in Postman and demonstrated in a Loom video.
 * **Decision**: Return (1) compact `polyline6` geometry + bounding box, (2) a standards-compliant GeoJSON `FeatureCollection` containing the route `LineString`, origin/destination pins, and annotated fuel stop `Point` features, and (3) a `map_url` pointing to a built-in Django interactive map page (`GET /api/v1/route/map/`) powered by Leaflet + OpenStreetMap (plus a Postman Visualizer template).
 * **Consequences**: Works programmatically for API consumers, pastes directly into GeoJSON tools, and opens with one click from Postman during the Loom walkthrough to display an interactive, accessible US route map with clickable fuel stop cards.
+
+### ADR-006: Spec-Driven Feature Flags & Expand-Contract Schema Rules for Effortless Rollback
+* **Context**: Rolling back application containers in Canary or Blue-Green deployments takes seconds, whereas rolling back database schema changes in production once live data has accumulated is error-prone and can cause outages or data loss.
+* **Decision**: Mandate in the SDD workflow that:
+  1. Every new feature specified in `specs/` is gated behind a dynamic feature flag (`apps/common/flags.py`) so features can be rolled back in `< 0.1 s` without redeploying code.
+  2. Every database schema change specified in `specs/` strictly adheres to the **Expand-Contract** pattern (`RULE-MIG-01`..`06`, validated in CI by `check_migration_safety`), keeping the database 100% backward-compatible with code version $N-1$.
+* **Consequences**: Features can be toggled off instantly via CLI, and Canary / Blue-Green / Kubernetes code rollbacks (`./bin/spotter-rollback`) can be executed at any time with zero database migration rollbacks required.

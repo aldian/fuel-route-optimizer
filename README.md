@@ -4,12 +4,21 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![Django 6.1.3](https://img.shields.io/badge/django-6.1.3-green.svg)](https://www.djangoproject.com/)
 [![DRF 3.18.3](https://img.shields.io/badge/DRF-3.18.3-red.svg)](https://www.django-rest-framework.org/)
-[![Coverage 95.7%](https://img.shields.io/badge/coverage-95.7%25-brightgreen.svg)](https://pytest-cov.readthedocs.io/)
+[![Coverage 95.8%](https://img.shields.io/badge/coverage-95.8%25-brightgreen.svg)](https://pytest-cov.readthedocs.io/)
 [![OpenAPI 3.1](https://img.shields.io/badge/OpenAPI-3.1-orange.svg)](https://swagger.io/specification/)
+[![Spec-Driven Development](https://img.shields.io/badge/SDD-specs%2F%20Source%20of%20Truth-purple.svg)](specs/README.md)
 
 A high-performance, cost-effective fuel route optimization REST API and interactive map visualization platform built for long-haul freight across the continental United States.
 
 Given any origin and destination within the USA, the API calculates the driving route, identifies all viable fuel stops along the highway corridor, computes the mathematically optimal refueling strategy to minimize total fuel spend, and produces an accessible visual map.
+
+> [!IMPORTANT]
+> **Developed with Spec-Driven Development (SDD) — [`specs/`](specs/README.md) is the Single Source of Truth**
+>
+> Every developer working on this project must follow our specification-first workflow ([`specs/README.md`](specs/README.md) & [`CONTRIBUTING.md`](CONTRIBUTING.md)):
+> 1. **Specs First**: All architectural boundaries, API schemas, optimization formulas, feature flags, and database migrations are defined in [`specs/`](specs/) **before** writing or modifying application code.
+> 2. **Feature Flags for Easy Feature Rollback**: Every new feature or heuristic must be gated behind a dynamic feature flag (`apps/common/flags.py` / `./bin/spotter-feature-flag`) so features can be toggled off in `< 0.1 s` in production without redeploying containers.
+> 3. **Strict Database Schema Rules (Expand-Contract) for Safe Release Rollback**: Because rolling back a production database with live data is hazardous, all schema changes must obey strict backward-compatible **Expand-Contract** rules (`RULE-MIG-01`..`06` in [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md), enforced in CI by `./bin/spotter-check-migrations`). Every migration must remain 100% compatible with code version $N-1$ so Canary, Blue-Green, or Kubernetes rollbacks (`./bin/spotter-rollback`) work instantaneously without database rollbacks.
 
 ---
 
@@ -327,26 +336,37 @@ python manage.py check_migration_safety --fail-on-warning
 
 ---
 
-## 8. Spec-Driven Development (SDD) Reference
+## 8. Spec-Driven Development (SDD) — Authoritative Specification Suite
 
-All requirements and architectural boundaries were formally documented in `specs/` prior to implementation:
+This project is developed openly using **Spec-Driven Development (SDD)**. The files in [`specs/`](specs/) are the **authoritative single source of truth** for all architecture, algorithms, API contracts, feature flags, and database schema rules.
 
-- [`specs/01-product-requirements.md`](specs/01-product-requirements.md): User stories, vehicle specs, and acceptance criteria.
-- [`specs/02-data-dictionary.md`](specs/02-data-dictionary.md): Geocoded OPIS truckstop schema and Census gazetteer.
-- [`specs/03-algorithms-and-optimizations.md`](specs/03-algorithms-and-optimizations.md): Monotonic stack solver and 3D ECEF spatial mathematics.
-- [`specs/04-api-design-and-openapi.md`](specs/04-api-design-and-openapi.md): Standardized REST API contracts and error formatting.
-- [`specs/05-test-strategy-and-quality-gates.md`](specs/05-test-strategy-and-quality-gates.md): 95% coverage mandate, E2E live server testing, and benchmarks.
-- [`specs/06-deployment-and-devops.md`](specs/06-deployment-and-devops.md): Multi-target CI/CD, K8s, Terraform, and Docker configurations.
-- [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md): Automated Route 53 & Namecheap DNS provisioning and Zero-to-Production CLI wizard.
-- [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md): Feature flags, Expand-Contract database migrations, and Canary / Blue-Green rollback operational guide.
-- [`specs/09-developer-rules-and-system-integrity.md`](specs/09-developer-rules-and-system-integrity.md): The 6 non-negotiable automated quality gates and rules of engagement.
-- [`specs/07-postman-and-video-walkthrough.md`](specs/07-postman-and-video-walkthrough.md): Postman Visualizer template and 5-minute video walkthrough guide.
+When contributing to this project:
+1. **Update the Spec First**: Any change to API behavior, optimization logic, feature flags, or database models must be specified in [`specs/`](specs/) before modifying code in `apps/`.
+2. **Design for Instant Feature Rollback**: Every new feature must declare its feature flag in [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md) and [`config/settings/base.py`](config/settings/base.py) so it can be toggled off in `< 0.1 s` via `./bin/spotter-feature-flag` without redeploying code.
+3. **Design for Zero-Downtime Database Rollback (Expand-Contract)**: Because rolling back a production database after live data is written is risky, all schema changes must follow the 3-phase **Expand-Contract** lifecycle (`RULE-MIG-01`..`06`, validated in CI by `python manage.py check_migration_safety`), keeping the schema 100% backward-compatible with code version $N-1$.
+
+| Specification File | Authoritative Scope |
+| :--- | :--- |
+| [`specs/README.md`](specs/README.md) | Master SDD constitution, requirement traceability matrix (`REQ-*`), SLAs, and Architectural Decision Records (`ADR-001`..`ADR-006`). |
+| [`specs/01-system-architecture.md`](specs/01-system-architecture.md) | Django 6.1.3 modular architecture, request lifecycle, multi-tier caching, concurrency, and latency budgets. |
+| [`specs/02-data-pipeline-and-schema.md`](specs/02-data-pipeline-and-schema.md) | Forensic audit of `fuel-prices-for-be-assessment.csv` (`8,151` rows), offline geocoding, relational schema, 3D `cKDTree` spatial index, and schema evolution rules. |
+| [`specs/03-routing-and-geocoding-integration.md`](specs/03-routing-and-geocoding-integration.md) | Domestic US boundary ray-casting, zero-call US Census Gazetteer, parallel geocoder fallback, OSRM/Valhalla routing, and `<= 3` call budget guard. |
+| [`specs/04-fuel-optimization-algorithm.md`](specs/04-fuel-optimization-algorithm.md) | Mathematical formulation (`500`-mile range, `10` MPG, `50`-gal tank), polyline mile-marker projection, detour modeling, and $O(K \log K)$ monotonic stack solver. |
+| [`specs/05-api-contract-and-map-delivery.md`](specs/05-api-contract-and-map-delivery.md) | REST API endpoints, request/response schemas, GeoJSON `FeatureCollection`, encoded polyline, standalone Leaflet map view, and Postman Visualizer integration. |
+| [`specs/06-testing-verification-and-delivery-plan.md`](specs/06-testing-verification-and-delivery-plan.md) | `>= 95%` unit test coverage gate, integration, live-server E2E concurrency tests, performance benchmarks, and 5-minute Loom walkthrough guide. |
+| [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md) | Multi-target CI/CD pipelines (AWS, GCP, Azure, K8s, Docker/Caddy, PaaS), Terraform IaC, automated Route 53 & Namecheap DNS provisioning, and `deploy_wizard` CLI. |
+| [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md) | Dynamic feature flags (`< 0.05 ms`), Expand-Contract zero-downtime database migration rules (`RULE-MIG-01`..`06`), and Canary / Blue-Green / 1-click rollbacks. |
+| [`specs/09-developer-rules-and-system-integrity.md`](specs/09-developer-rules-and-system-integrity.md) | The 6 non-negotiable automated quality gates and contributor rules of engagement. |
 
 ---
 
 ## 9. Developer Rules & Contributing
 
-All contributors must read and follow the **[Contributing & Developer Rules Guide](CONTRIBUTING.md)** and review the **[Pull Request Template](.github/pull_request_template.md)** before submitting code.
+All contributors and AI coding agents must read and follow:
+- **[`specs/README.md`](specs/README.md)**: Authoritative SDD workflow and requirement traceability.
+- **[`CONTRIBUTING.md`](CONTRIBUTING.md)**: Developer workflow, pre-push verification commands, feature flag rules, and Expand-Contract database schema policy.
+- **[`AGENTS.md`](AGENTS.md)**: Concise SDD & safe-rollback instructions for developers and AI pair-programming agents.
+- **[`.github/pull_request_template.md`](.github/pull_request_template.md)**: Mandatory pull request checklist.
 
 ---
 

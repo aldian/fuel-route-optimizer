@@ -7,18 +7,27 @@
 
 ## 1. Engineering Philosophy: Spec-Driven Development (SDD)
 
-This repository operates strictly under **Spec-Driven Development (SDD)**. 
+> [!IMPORTANT]
+> **Open Spec-Driven Development (SDD) — `specs/` is the Single Source of Truth**
+> This project is openly developed using **Spec-Driven Development (SDD)**. The specification documents in [`specs/`](./specs/README.md) are the authoritative **Single Source of Truth** for the entire system—including where **feature flags** and **strict Expand-Contract database schema rules** are defined prior to writing code so that every feature or deployment supports instant, zero-downtime rollback without rolling back the production database.
 
 ```mermaid
 flowchart LR
-    A["1. Formal Specification (specs/)"] --> B["2. Test Gate Definition (>= 95% Coverage)"]
-    B --> C["3. Implementation (apps/)"]
-    C --> D["4. Safety Linting & Automated CI"]
-    D --> E["5. Production Deploy & Feature Flag"]
+    A["1. Update Authoritative Spec in specs/<br/>(Define Requirement, Feature Flag,<br/>& Safe Expand-Contract Schema Plan)"] --> B["2. Register Feature Flag<br/>(apps/common/flags.py)"]
+    B --> C["3. Write Tests for Flag=ON & Flag=OFF<br/>(>= 95% Coverage Gate)"]
+    C --> D["4. Implement Code &<br/>Backward-Compatible Migration"]
+    D --> E["5. Verify Migration Safety Linter<br/>(./bin/spotter-check-migrations)"]
 ```
 
-1. **Specs are Source of Truth**: Before writing or modifying code in `apps/`, the architectural intent, data schemas, API contracts, and failure boundaries must be documented in [`specs/`](specs/).
-2. **No Spec Drift**: If requirements or algorithm heuristics change during development, the corresponding specification document **must be updated in the same pull request**.
+1. **Specifications in [`specs/`](./specs/README.md) Are the Single Source of Truth**:
+   - Before writing or modifying any code in `apps/`, the architectural intent, API contract, feature flag behavior, and database schema evolution plan must be documented first in [`specs/`](./specs/README.md) (see [`AGENTS.md`](./AGENTS.md) for the complete spec index).
+   - No feature or schema change may be merged if it is not specified in `specs/`. If requirements or heuristics evolve during implementation, the corresponding specification file in `specs/` **must be updated first in the same pull request**.
+2. **Feature Flags Originate in the Spec for Instant Feature Rollback ([`specs/08`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md))**:
+   - Every behavioral, algorithmic, or API change must define its feature flag in [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md) and register it in [`apps/common/flags.py`](./apps/common/flags.py).
+   - Specifying the `flag=True` and `flag=False` behavior upfront guarantees that any feature can be rolled back in **$< 0.1\text{ s}$** (`./bin/spotter-feature-flag disable <flag_name>`) without redeploying containers or touching the database.
+3. **Database Schema Rules Originate in the Spec for Safe Release Rollback ([`specs/02`](./specs/02-data-pipeline-and-schema.md) & [`specs/08`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md))**:
+   - Rolling back a live PostgreSQL/PostGIS database in production is hazardous and risks permanent data loss when production tables already hold live data.
+   - Therefore, [`specs/02-data-pipeline-and-schema.md`](./specs/02-data-pipeline-and-schema.md) (Section 6) and [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md) (Section 3) mandate strict **Expand-Contract** database evolution rules (`RULE-MIG-01` through `RULE-MIG-06`). Every migration must remain 100% backward-compatible with the previous application release (`v1`) so application rollbacks (`./bin/spotter-rollback`) work seamlessly without rolling back the database.
 
 ---
 
@@ -86,13 +95,13 @@ Commit messages must describe the **content change** (what was added, modified, 
 ## 3. Feature Flags & Decoupled Release Management
 
 Never bind code deployment directly to user-facing feature exposure:
-1. **Dynamic Feature Flags**:
-   - Wrap new algorithms, providers, or experimental features with `flags.is_enabled("FEATURE_NAME", key=user_id)`.
-   - Configure percentage rollouts via deterministic consistent hashing in [`apps/common/flags.py`](apps/common/flags.py).
-2. **Instant Kill-Switch**:
-   - If an issue occurs in production, disable the feature instantly via CLI without redeploying code or restarting containers:
+1. **Dynamic Feature Flags Defined in [`specs/08`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md)**:
+   - Document the flag in [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md) and register its default state in [`apps/common/flags.py`](./apps/common/flags.py).
+   - Wrap new algorithms, providers, or experimental features with `FeatureFlagManager.is_enabled("flag_name", context_id=...)` or `@feature_flag_gate("flag_name")`.
+2. **Instant Kill-Switch (`< 0.1s` Feature Rollback)**:
+   - If an issue occurs in production, disable the feature instantly via CLI without redeploying code, restarting containers, or touching the database:
      ```bash
-     ./bin/spotter-feature-flag --set FEATURE_NAME off
+     ./bin/spotter-feature-flag disable <flag_name>
      ```
 
 ---
@@ -155,17 +164,17 @@ pytest tests/ --cov=apps --cov-branch --cov-report=term-missing --cov-fail-under
 
 If an incident occurs in production, follow the established rollback hierarchy:
 
-1. **Level 1 (Feature Issue)**: Toggle the feature flag off:
+1. **Level 1 (Feature Issue — `< 0.1s`)**: Toggle the feature flag off without redeploying:
    ```bash
-   ./bin/spotter-feature-flag --set FAULTY_FEATURE off
+   ./bin/spotter-feature-flag disable <flag_name>
    ```
-2. **Level 2 (Kubernetes Blue-Green Switch)**: Revert live traffic pointer to Blue (< 1s):
+2. **Level 2 (Kubernetes Blue-Green Switch — `~1s`)**: Revert live traffic pointer to Blue:
    ```bash
-   ./deploy/k8s/overlays/blue-green/switch_traffic.sh blue production
+   ./bin/spotter-rollback --target k8s-blue-green --namespace production
    ```
 3. **Level 3 (GitHub Actions 1-Click Rollback)**:
-   - Navigate to GitHub Actions $\to$ **"Rollback Deployment (1-Click Emergency Rollback)"** $\to$ Run workflow.
-4. **Level 4 (CLI Rollback)**:
+   - Navigate to GitHub Actions $\to$ **"Emergency Rollback (Canary / Blue-Green / Compose / Feature Flag)"** (`.github/workflows/rollback.yml`) $\to$ Run workflow.
+4. **Level 4 (CLI Rollback — Canary / K8s / Docker Compose)**:
    ```bash
-   ./bin/spotter-rollback --target k8s --namespace production
+   ./bin/spotter-rollback --target k8s-canary --namespace production
    ```

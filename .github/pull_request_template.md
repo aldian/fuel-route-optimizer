@@ -1,8 +1,10 @@
 ## Summary of Changes
 <!-- Describe the content change: what was added, modified, or removed. -->
 
-### Related Specification
-- [ ] Aligned with [`specs/`](specs/) (Spec document updated if behavior changed)
+### Authoritative Specification (`specs/` Single Source of Truth)
+- [ ] **Spec-First Verification**: Corresponding specification in [`specs/`](../specs/README.md) was updated **first** before writing implementation code.
+- [ ] **Feature Flag Specified for Instant Rollback**: Controlling feature flag is documented in [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](../specs/08-feature-flags-and-zero-downtime-database-migrations.md), registered in [`apps/common/flags.py`](../apps/common/flags.py), and tested with both `flag=True` and `flag=False`.
+- [ ] **Expand-Contract Schema Plan Specified**: Any database model change is documented in [`specs/02-data-pipeline-and-schema.md`](../specs/02-data-pipeline-and-schema.md) as a backward-compatible **Expand** migration so code rollbacks (`./bin/spotter-rollback`) never require rolling back the production database.
 
 ---
 

@@ -182,3 +182,19 @@ $$r_{\text{chord}} = 2 R \sin\left(\frac{r_{\text{surface}}}{2 R}\right)$$
    - Convert the `M` sample points to `(M, 3)` Cartesian `(X, Y, Z)` vectors and invoke `tree.query_ball_point(sample_xyz, r=r_chord)` in a single vectorized C call (`~1.5 ms`), taking the union of returned station indices.
 3. **Cache Version Token**:
    - `StationSpatialIndex` computes a deterministic `data_version` digest over `(opis_truckstop_id, retail_price, latitude, longitude)` at build time so optimization caches automatically invalidate whenever station prices are updated.
+
+---
+
+## 6. Database Schema Evolution & Zero-Downtime Rollback Rules (`REQ-OPS-005`)
+
+Because rolling back a relational database in production when it already contains large volumes of live data is error-prone and risks table locks or data loss, **every schema modification to `FuelStation`, `USPlaceGazetteer`, or any future model must be specified here first and strictly obey the Expand-Contract (Parallel Run) pattern**:
+
+1. **Backward Compatibility with Version $N-1$**: Every database migration applied during release $N$ must remain 100% compatible with running application instances of version $N-1$. This guarantees that if a Canary, Blue-Green, or RollingUpdate deployment is rolled back (`./bin/spotter-rollback`), the previous application code continues operating without any downward database migration (`migrate` rollback).
+2. **Enforced Schema Safety Rules (`python manage.py check_migration_safety`)**:
+   - **`RULE-MIG-01`**: Never add a `NOT NULL` column (`AddField`) without an explicit `default` value.
+   - **`RULE-MIG-02`**: Never remove a column (`RemoveField`) in the same release that removes code references; deprecate in code first, deploy, and drop in a subsequent release.
+   - **`RULE-MIG-03` & `RULE-MIG-04`**: Never rename an active column (`RenameField`) or table (`RenameModel`) in place; use Expand-Contract (add new field, dual-write, backfill, switch reads, contract later).
+   - **`RULE-MIG-05`**: Never execute destructive raw SQL (`DROP TABLE`, `DROP COLUMN`, `TRUNCATE`) in online migrations.
+   - **`RULE-MIG-06`**: Never alter an existing nullable column to `NOT NULL` (`AlterField`) without backfilling and providing a default.
+3. **Cross-Reference**: See [08-feature-flags-and-zero-downtime-database-migrations.md](./08-feature-flags-and-zero-downtime-database-migrations.md) for the full 3-phase Expand-Contract sequence and feature flag rollback architecture.
+
