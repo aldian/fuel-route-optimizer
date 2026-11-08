@@ -24,6 +24,7 @@ Before planning or implementing any change, consult the master index in [`specs/
 | **Spec 07** | [`specs/07-cicd-and-production-deployment-cli.md`](./specs/07-cicd-and-production-deployment-cli.md) | Zero-to-Production wizard (`./bin/spotter-deploy`), Route 53 & Namecheap DNS automation, and **One-Command Ephemeral Demo Teardown (`./bin/spotter-destroy`, `REQ-OPS-006`)**. |
 | **Spec 08** | [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md) | **Feature Flag Catalog (`apps/common/flags.py`), Multi-Layer Rollback Architecture (`./bin/spotter-rollback`), and Zero-Downtime Migration Linter (`./bin/spotter-check-migrations`)**. |
 | **Spec 09** | [`specs/09-developer-rules-and-system-integrity.md`](./specs/09-developer-rules-and-system-integrity.md) | Mandatory developer & agent integrity rules and CI enforcement gates. |
+| **Spec 10** | [`specs/10-sre-and-sla-observability.md`](./specs/10-sre-and-sla-observability.md) | SRE SLI/SLO telemetry (`apps/common/sre.py`), Error Budget burn tracking, `/api/v1/sre/sla/`, Prometheus `/api/v1/sre/metrics/`, and `./bin/spotter-sre` CLI auditor (`REQ-OPS-007`). |
 
 ---
 
@@ -69,4 +70,7 @@ flowchart LR
 
 # 5. Tear down ephemeral demo deployment & DNS records ($0/hr cost saver)
 ./bin/spotter-destroy --dry-run
+
+# 6. Audit all 6 SLAs / SLOs and Error Budget via SRE CLI
+./bin/spotter-sre
 ```

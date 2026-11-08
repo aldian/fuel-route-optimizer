@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Standalone SRE CLI wrapper to verify all 6 SLAs/SLOs and Error Budget.
+# Usage:
+#   ./bin/spotter-sre
+#   ./bin/spotter-sre --json
+#   ./bin/spotter-sre --prometheus
+#   ./bin/spotter-sre --remote-url https://api.fuel-optimizer.example.com
+#   ./bin/spotter-sre --auto-rollback --rollback-target k8s --dry-run
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [ -x "${PROJECT_ROOT}/.venv/bin/python" ]; then
+    PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
+
+exec "${PYTHON_BIN}" "${PROJECT_ROOT}/manage.py" check_sla "$@"

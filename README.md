@@ -351,6 +351,24 @@ When deploying the application for a live demonstration, you can tear down **all
 - **1-Click GitHub Actions Demo Teardown**: Trigger [`.github/workflows/destroy.yml`](.github/workflows/destroy.yml) (*"Destroy Ephemeral Demo Deployment (Save Costs)"*) from the GitHub Actions UI and type `DESTROY` to tear down the environment remotely.
 - **Feature Flag Protection for Permanent Production**: Controlled by the `ALLOW_EPHEMERAL_TEARDOWN` feature flag (`True` by default during demo phase). Once transitioning to a permanent production environment, run `./bin/spotter-feature-flag --set ALLOW_EPHEMERAL_TEARDOWN off` to block accidental teardowns.
 
+### 7.7 Site Reliability Engineering (SRE) & Automated SLA / SLO Compliance
+Verify at any moment whether the system meets all **6 Authoritative SLAs** (`>= 99.9%` availability error budget, `< 15 ms` internal compute P99, `< 20 ms` cached E2E P95, `< 350 ms` uncached E2E P95, `<= 3` external API call budget, and `6,626` active US stations + `cKDTree` readiness):
+
+```bash
+# Run synthetic route probes + print the live 6-SLO Compliance Scorecard
+./bin/spotter-sre
+
+# Emit machine-readable JSON or Prometheus OpenMetrics format
+./bin/spotter-sre --json
+./bin/spotter-sre --prometheus
+
+# Audit a remote deployment and automatically roll back if any SLA is breached
+./bin/spotter-sre --remote-url https://api.fuel-optimizer.example.com --auto-rollback --rollback-target k8s
+```
+
+- **REST SLA Compliance Endpoint**: `GET /api/v1/sre/sla/` (returns JSON scorecard, percentile latencies `p50`/`p95`/`p99`, and remaining Error Budget).
+- **Prometheus / OpenMetrics Exporter**: `GET /api/v1/sre/metrics/` (exposes `spotter_sla_compliant`, `spotter_compute_latency_ms_p99`, `spotter_error_budget_remaining_pct`, etc. for Grafana & Alertmanager).
+
 ---
 
 ## 8. Spec-Driven Development (SDD) — Authoritative Specification Suite
@@ -374,6 +392,7 @@ When contributing to this project:
 | [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md) | Multi-target CI/CD pipelines (AWS, GCP, Azure, K8s, Docker/Caddy, PaaS), Terraform IaC, automated Route 53 & Namecheap DNS provisioning, and `deploy_wizard` CLI. |
 | [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md) | Dynamic feature flags (`< 0.05 ms`), Expand-Contract zero-downtime database migration rules (`RULE-MIG-01`..`06`), and Canary / Blue-Green / 1-click rollbacks. |
 | [`specs/09-developer-rules-and-system-integrity.md`](specs/09-developer-rules-and-system-integrity.md) | The 6 non-negotiable automated quality gates and contributor rules of engagement. |
+| [`specs/10-sre-and-sla-observability.md`](specs/10-sre-and-sla-observability.md) | SRE telemetry engine (`apps/common/sre.py`), 6-SLO & Error Budget evaluation, `/api/v1/sre/sla/` & Prometheus `/api/v1/sre/metrics/` endpoints, and `./bin/spotter-sre` CLI auditor. |
 
 ---
 

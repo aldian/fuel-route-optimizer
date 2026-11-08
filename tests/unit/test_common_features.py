@@ -313,3 +313,155 @@ def test_feature_flag_cli_management() -> None:
     # Test --delete
     call_command("feature_flag", delete="CLI_TEST_FLAG")
     assert flags.is_enabled("CLI_TEST_FLAG", default=False) is False
+
+
+# ============================================================================
+# 5. SRE Telemetry, SLI/SLO Evaluator, REST Views & CLI Auditor Tests
+# ============================================================================
+
+def test_sre_monitor_record_and_evaluate_compliant_and_breached() -> None:
+    import io
+    from apps.common.sre import SREMonitor, compute_percentile
+
+    assert compute_percentile([], 99) == 0.0
+    assert compute_percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50) == 3.0
+
+    mon = SREMonitor()
+    with patch.object(mon, "_inspect_data_readiness", return_value=(6626, True)):
+        # 1. Compliant telemetry
+        mon.record_request(
+            compute_time_ms=4.2,
+            total_latency_ms=45.0,
+            cache_hit=False,
+            external_calls=1,
+            status_code=200,
+        )
+        mon.record_request(
+            compute_time_ms=3.8,
+            total_latency_ms=6.5,
+            cache_hit=True,
+            external_calls=0,
+            status_code=200,
+        )
+        report = mon.evaluate_sla()
+        assert report["sla_compliant"] is True
+        assert report["overall_status"] == "MEETING_SLA"
+        assert report["error_budget"]["error_budget_remaining_pct"] == 100.0
+
+        prom_text = mon.render_prometheus_metrics()
+        assert "spotter_sla_compliant 1" in prom_text
+        assert "spotter_active_us_stations 6626" in prom_text
+
+        # 2. Test when ENABLE_SRE_TELEMETRY is disabled
+        flags.set_flag("ENABLE_SRE_TELEMETRY", False)
+        try:
+            mon.record_request(
+                compute_time_ms=999.0,
+                total_latency_ms=999.0,
+                cache_hit=False,
+                external_calls=10,
+                status_code=500,
+            )
+            assert mon.evaluate_sla()["telemetry"]["total_requests"] == 2
+        finally:
+            flags.delete_flag("ENABLE_SRE_TELEMETRY")
+
+        # 3. Breach availability (500 error), client error (400), and external call budget (> 3)
+        mon.record_request(
+            compute_time_ms=2.0,
+            total_latency_ms=10.0,
+            cache_hit=True,
+            external_calls=0,
+            status_code=400,
+        )
+        mon.record_request(
+            compute_time_ms=25.0,
+            total_latency_ms=500.0,
+            cache_hit=False,
+            external_calls=4,
+            status_code=500,
+        )
+        breached_report = mon.evaluate_sla()
+        assert breached_report["sla_compliant"] is False
+        assert breached_report["overall_status"] == "BREACHED"
+        assert breached_report["error_budget"]["budget_exhausted"] is True
+
+
+@pytest.mark.django_db
+def test_sre_rest_views_and_check_sla_command(client: object) -> None:
+    import io
+    from apps.common.sre import sre_monitor
+
+    sre_monitor.reset()
+    # Exercise real _inspect_data_readiness before mocking
+    sre_monitor._inspect_data_readiness()
+
+    with patch.object(sre_monitor, "_inspect_data_readiness", return_value=(6626, True)):
+        sre_monitor.record_request(
+            compute_time_ms=3.5,
+            total_latency_ms=5.0,
+            cache_hit=True,
+            external_calls=0,
+            status_code=200,
+        )
+
+        # 1. GET /api/v1/sre/sla/
+        resp_sla = client.get("/api/v1/sre/sla/")
+        assert resp_sla.status_code == 200
+        data = resp_sla.json()
+        assert data["sla_compliant"] is True
+        assert len(data["slos"]) == 6
+
+        # 2. GET /api/v1/sre/metrics/
+        resp_prom = client.get("/api/v1/sre/metrics/")
+        assert resp_prom.status_code == 200
+        assert "spotter_sla_compliant 1" in resp_prom.content.decode("utf-8")
+
+        # 3. CLI check_sla with synthetic probe, --json, and --prometheus
+        out_table = io.StringIO()
+        with patch("apps.stations.models.FuelStation.objects.filter") as mock_filter:
+            mock_filter.return_value.count.return_value = 6626
+            call_command("check_sla", stdout=out_table)
+        assert "MEETING_SLA" in out_table.getvalue()
+
+        out_json = io.StringIO()
+        call_command("check_sla", no_probe=True, as_json=True, stdout=out_json)
+        assert '"sla_compliant": true' in out_json.getvalue().lower()
+
+        out_prom = io.StringIO()
+        call_command("check_sla", no_probe=True, prometheus=True, stdout=out_prom)
+        assert "spotter_sla_compliant 1" in out_prom.getvalue()
+
+        # 4. CLI check_sla with --remote-url (success and error)
+        mock_remote_resp = MagicMock()
+        mock_remote_resp.json.return_value = data
+        mock_remote_resp.raise_for_status.return_value = None
+        with patch("httpx.Client.get", return_value=mock_remote_resp):
+            out_remote = io.StringIO()
+            call_command("check_sla", remote_url="https://api.example.com", stdout=out_remote)
+            assert "MEETING_SLA" in out_remote.getvalue()
+
+        with patch("httpx.Client.get", side_effect=RuntimeError("Remote unreachable")):
+            with pytest.raises(CommandError, match="Failed to fetch remote SRE SLA report"):
+                call_command("check_sla", remote_url="https://api.example.com")
+
+        # 5. CLI check_sla breach with --auto-rollback --dry-run
+        sre_monitor.record_request(
+            compute_time_ms=50.0,
+            total_latency_ms=900.0,
+            cache_hit=False,
+            external_calls=5,
+            status_code=500,
+        )
+        out_breach = io.StringIO()
+        with pytest.raises(CommandError, match="SLA compliance check FAILED"):
+            call_command(
+                "check_sla",
+                no_probe=True,
+                auto_rollback=True,
+                rollback_target="k8s",
+                dry_run=True,
+                stdout=out_breach,
+            )
+        assert "[SRE AUTO-ROLLBACK]" in out_breach.getvalue()
+        sre_monitor.reset()

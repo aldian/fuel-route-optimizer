@@ -91,6 +91,7 @@ The feature flag engine is implemented in [`apps/common/flags.py`](file:///home/
 | `CANARY_ROUTING` | `False` | Gates experimental routing provider heuristics; can be rolled out progressively (`10%`, `25%`, `100%`) or killed in `< 0.1 s`. |
 | `EXPERIMENTAL_SOLVER` | `False` | Gates experimental solver extensions while preserving the stable $O(K \log K)$ monotonic queue solver as fallback. |
 | `ALLOW_EPHEMERAL_TEARDOWN` | `True` | Permits one-command demo environment destruction (`./bin/spotter-destroy` / `python manage.py destroy_deployment`). Set to `off` once transitioning from demo mode to permanent production to prevent accidental infrastructure destruction. |
+| `ENABLE_SRE_TELEMETRY` | `True` | Controls real-time SRE SLI/SLO latency and error-budget recording in `apps/common/sre.py`. Can be toggled off in `< 0.1 s` via `./bin/spotter-feature-flag --set ENABLE_SRE_TELEMETRY off`. |
 
 ---
 

@@ -1,5 +1,6 @@
 """Route optimization REST API endpoints."""
 from decimal import Decimal
+import time
 import urllib.parse
 from typing import Any
 from rest_framework import status
@@ -12,6 +13,7 @@ from apps.api.serializers.route import (
     RouteOptimizationRequestSerializer,
     RouteOptimizationResponseDocSerializer,
 )
+from apps.common.sre import sre_monitor
 from apps.optimizer.domain import VehicleSpec
 from apps.optimizer.service import OptimizationResult, RouteOptimizationService
 from apps.routing.call_budget import ExternalCallBudget
@@ -69,6 +71,7 @@ class RouteOptimizationView(APIView):
             corridor_miles=corridor_miles,
         )
 
+        t0 = time.perf_counter()
         budget = ExternalCallBudget(max_calls=3)
         result: OptimizationResult = self.service.optimize_route(
             start_input=start_input,
@@ -82,6 +85,14 @@ class RouteOptimizationView(APIView):
             result=result,
             spec=spec,
             include_geojson=include_geojson,
+        )
+        total_e2e_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+        sre_monitor.record_request(
+            compute_time_ms=result.compute_time_ms,
+            total_latency_ms=total_e2e_ms,
+            cache_hit=result.cache_hit,
+            external_calls=result.budget.total_count,
+            status_code=status.HTTP_200_OK,
         )
         return Response(response_payload, status=status.HTTP_200_OK)
 
