@@ -1,0 +1,94 @@
+name: Destroy Ephemeral Demo Deployment (Save Costs)
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Type DESTROY to confirm tearing down all demo infrastructure and DNS records"
+        required: true
+        type: string
+      target:
+        description: "Deployment target to tear down"
+        required: true
+        default: "k8s"
+        type: choice
+        options:
+          - k8s
+          - gcp
+          - aws
+          - azure
+          - docker-vps
+          - paas
+      k8s_provider:
+        description: "Kubernetes provider (if target is k8s)"
+        required: false
+        default: "gcp-gke"
+        type: choice
+        options:
+          - gcp-gke
+          - aws-eks
+          - azure-aks
+          - generic
+      destroy_cluster:
+        description: "Also delete the managed Kubernetes cluster (GKE/EKS/AKS) for $0/hr idle cost"
+        required: false
+        default: false
+        type: boolean
+      dns_provider:
+        description: "DNS provider to delete A-records from"
+        required: false
+        default: "none"
+        type: choice
+        options:
+          - none
+          - route53
+          - namecheap
+
+jobs:
+  destroy-demo-environment:
+    name: Teardown Demo Resources & DNS Records
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify Explicit Confirmation
+        run: |
+          if [ "${{ inputs.confirm_destroy }}" != "DESTROY" ]; then
+            echo "::error::Confirmation failed. You must type 'DESTROY' to proceed."
+            exit 1
+          fi
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute Teardown Plan (Dry-Run Preview + Apply)
+        env:
+          PRIMARY_DOMAIN: ${{ secrets.PRIMARY_DOMAIN }}
+          STAGING_DOMAIN: ${{ secrets.STAGING_DOMAIN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          NAMECHEAP_API_KEY: ${{ secrets.NAMECHEAP_API_KEY }}
+        run: |
+          CLUSTER_FLAG=""
+          if [ "${{ inputs.destroy_cluster }}" = "true" ]; then
+            CLUSTER_FLAG="--destroy-cluster"
+          fi
+
+          python manage.py destroy_deployment \
+            --target "${{ inputs.target }}" \
+            --k8s-provider "${{ inputs.k8s_provider }}" \
+            --dns-provider "${{ inputs.dns_provider }}" \
+            --domain "${PRIMARY_DOMAIN:-localhost}" \
+            --staging-domain "${STAGING_DOMAIN:-staging.localhost}" \
+            ${CLUSTER_FLAG} \
+            --yes \
+            --dry-run

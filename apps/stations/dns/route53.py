@@ -116,3 +116,85 @@ class Route53DNSProvider(DNSProvider):
                 provider=self.provider_name,
                 message=msg,
             )
+
+    def delete_a_record(self, domain: str, target_ip: str | None = None, ttl: int = 300) -> DNSRecordResult:
+        """Delete an A record from Route 53 (idempotent if record does not exist)."""
+        clean_domain = domain.strip().rstrip(".")
+        fqdn = f"{clean_domain}."
+
+        try:
+            client = self._get_client()
+            zone_id = self._find_hosted_zone_id(clean_domain)
+
+            records_to_delete: list[dict[str, str]] = []
+            record_ttl = ttl
+
+            if target_ip:
+                records_to_delete = [{"Value": target_ip}]
+            else:
+                resp_list = client.list_resource_record_sets(
+                    HostedZoneId=zone_id,
+                    StartRecordName=fqdn,
+                    StartRecordType="A",
+                    MaxItems="5",
+                )
+                for rset in resp_list.get("ResourceRecordSets", []):
+                    if rset.get("Name", "").rstrip(".") == clean_domain and rset.get("Type") == "A":
+                        records_to_delete = rset.get("ResourceRecords", [])
+                        record_ttl = int(rset.get("TTL", ttl))
+                        break
+
+            if not records_to_delete:
+                msg = f"Route 53 A record for '{clean_domain}' already absent in zone '{zone_id}'."
+                logger.info(msg)
+                return DNSRecordResult(
+                    success=True,
+                    domain=clean_domain,
+                    record_type="A",
+                    target_ip=target_ip or "",
+                    provider=self.provider_name,
+                    message=msg,
+                )
+
+            resolved_ip = records_to_delete[0].get("Value", target_ip or "")
+            change_batch = {
+                "Comment": "Automated DNS record deletion by Spotter Destroy CLI",
+                "Changes": [
+                    {
+                        "Action": "DELETE",
+                        "ResourceRecordSet": {
+                            "Name": fqdn,
+                            "Type": "A",
+                            "TTL": record_ttl,
+                            "ResourceRecords": records_to_delete,
+                        },
+                    }
+                ],
+            }
+
+            resp = client.change_resource_record_sets(
+                HostedZoneId=zone_id,
+                ChangeBatch=change_batch,
+            )
+            change_id = resp.get("ChangeInfo", {}).get("Id", "unknown")
+            msg = f"Successfully submitted DELETE to Route 53 zone '{zone_id}' (Change ID: {change_id})."
+            logger.info(msg)
+            return DNSRecordResult(
+                success=True,
+                domain=clean_domain,
+                record_type="A",
+                target_ip=resolved_ip,
+                provider=self.provider_name,
+                message=msg,
+            )
+        except Exception as exc:
+            msg = f"Failed to delete Route 53 record for '{clean_domain}': {exc}"
+            logger.error(msg)
+            return DNSRecordResult(
+                success=False,
+                domain=clean_domain,
+                record_type="A",
+                target_ip=target_ip or "",
+                provider=self.provider_name,
+                message=msg,
+            )

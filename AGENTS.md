@@ -14,14 +14,14 @@ Before planning or implementing any change, consult the master index in [`specs/
 
 | Spec ID | File | Scope & Source-of-Truth Responsibility |
 | :--- | :--- | :--- |
-| **Index** | [`specs/README.md`](./specs/README.md) | Master SDD Governance Rules, Requirement Traceability Matrix, and Architecture Decision Records (`ADR-001` – `ADR-006`). |
-| **Spec 01** | [`specs/01-system-architecture.md`](./specs/01-system-architecture.md) | C4 containers, Django 6.0 / Python 3.12 runtime, Redis caching, and `<= 1` external OSRM call invariant. |
-| **Spec 02** | [`specs/02-data-pipeline-and-schema.md`](./specs/02-data-pipeline-and-schema.md) | `FuelStation` PostGIS model, ETL deduplication, and **Section 6: Expand-Contract Database Schema Rules (`REQ-OPS-005`)**. |
-| **Spec 03** | [`specs/03-spatial-corridor-and-dp-optimizer.md`](./specs/03-spatial-corridor-and-dp-optimizer.md) | PostGIS spatial corridor filter (`ST_DWithin` + `ST_LineLocatePoint`) and $O(N \log N)$ Monotonic Queue DP algorithm. |
-| **Spec 04** | [`specs/04-api-contract-and-validation.md`](./specs/04-api-contract-and-validation.md) | `POST /api/v1/routes/optimize/` request/response schemas and RFC 7807 error contracts. |
-| **Spec 05** | [`specs/05-testing-and-tdd-strategy.md`](./specs/05-testing-and-tdd-strategy.md) | Red-Green-Refactor TDD workflow and $\ge 95.0\%$ coverage gate (`--cov-fail-under=95`). |
-| **Spec 06** | [`specs/06-ui-and-frontend-integration.md`](./specs/06-ui-and-frontend-integration.md) | MapLibre GL JS + Deck.gl WebGL UI and WCAG AAA contrast compliance. |
-| **Spec 07** | [`specs/07-zero-to-production-and-load-testing.md`](./specs/07-zero-to-production-and-load-testing.md) | Zero-to-Production wizard (`./bin/spotter-deploy`), Route 53 & Namecheap DNS automation, and Locust stress testing. |
+| **Index** | [`specs/README.md`](./specs/README.md) | Master SDD Governance Rules, Requirement Traceability Matrix (`REQ-*`), and Architecture Decision Records (`ADR-001` – `ADR-006`). |
+| **Spec 01** | [`specs/01-system-architecture.md`](./specs/01-system-architecture.md) | Django 6.1.3 / Python 3.12 runtime, request lifecycle, multi-tier caching, concurrency, and latency budgets. |
+| **Spec 02** | [`specs/02-data-pipeline-and-schema.md`](./specs/02-data-pipeline-and-schema.md) | `FuelStation` model, OPIS CSV deduplication, 3D `cKDTree`, and **Section 6: Expand-Contract Database Schema Rules (`REQ-OPS-005`)**. |
+| **Spec 03** | [`specs/03-routing-and-geocoding-integration.md`](./specs/03-routing-and-geocoding-integration.md) | Domestic US ray-casting boundary, zero-call US Census Gazetteer, OSRM/Valhalla routing, and `<= 3` external call budget guard. |
+| **Spec 04** | [`specs/04-fuel-optimization-algorithm.md`](./specs/04-fuel-optimization-algorithm.md) | Mathematical formulation (`500`-mile range, `10` MPG, `50`-gal tank) and $O(K \log K)$ monotonic queue DP solver. |
+| **Spec 05** | [`specs/05-api-contract-and-map-delivery.md`](./specs/05-api-contract-and-map-delivery.md) | REST API endpoints, GeoJSON `FeatureCollection`, encoded polyline, and interactive Leaflet map delivery. |
+| **Spec 06** | [`specs/06-testing-verification-and-delivery-plan.md`](./specs/06-testing-verification-and-delivery-plan.md) | Red-Green-Refactor TDD workflow, $\ge 95.0\%$ coverage gate (`--cov-fail-under=95`), E2E suite, and 5-minute Loom plan. |
+| **Spec 07** | [`specs/07-cicd-and-production-deployment-cli.md`](./specs/07-cicd-and-production-deployment-cli.md) | Zero-to-Production wizard (`./bin/spotter-deploy`), Route 53 & Namecheap DNS automation, and **One-Command Ephemeral Demo Teardown (`./bin/spotter-destroy`, `REQ-OPS-006`)**. |
 | **Spec 08** | [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](./specs/08-feature-flags-and-zero-downtime-database-migrations.md) | **Feature Flag Catalog (`apps/common/flags.py`), Multi-Layer Rollback Architecture (`./bin/spotter-rollback`), and Zero-Downtime Migration Linter (`./bin/spotter-check-migrations`)**. |
 | **Spec 09** | [`specs/09-developer-rules-and-system-integrity.md`](./specs/09-developer-rules-and-system-integrity.md) | Mandatory developer & agent integrity rules and CI enforcement gates. |
 
@@ -61,9 +61,12 @@ flowchart LR
 .venv/bin/pytest tests/unit/ -m unit --cov=apps --cov-report=term-missing --cov-fail-under=95
 
 # 3. Inspect or toggle feature flags
-./bin/spotter-feature-flag list
-./bin/spotter-feature-flag disable <flag_name>
+./bin/spotter-feature-flag --list
+./bin/spotter-feature-flag --set <FLAG_NAME> off
 
-# 4. Perform application rollback (Canary abort / Blue-Green flip / K8s undo / Compose tag revert)
-./bin/spotter-rollback --target k8s-blue-green --dry-run
+# 4. Perform application rollback (Canary / Blue-Green / K8s / Docker)
+./bin/spotter-rollback --target k8s --namespace production --dry-run
+
+# 5. Tear down ephemeral demo deployment & DNS records ($0/hr cost saver)
+./bin/spotter-destroy --dry-run
 ```

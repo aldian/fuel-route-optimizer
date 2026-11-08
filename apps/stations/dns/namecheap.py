@@ -141,3 +141,79 @@ class NamecheapDNSProvider(DNSProvider):
                 provider=self.provider_name,
                 message=msg,
             )
+
+    def delete_a_record(self, domain: str, target_ip: str | None = None, ttl: int = 300) -> DNSRecordResult:
+        """Delete an A record in Namecheap while preserving all other existing host records."""
+        clean_domain = domain.strip().rstrip(".")
+        subdomain, sld, tld = extract_domain_parts(clean_domain)
+
+        try:
+            existing_hosts = self._get_existing_hosts(sld, tld)
+            remaining_hosts: list[dict[str, str]] = []
+            removed_ip = target_ip or ""
+            removed = False
+
+            for host in existing_hosts:
+                is_match = (
+                    host["HostName"].lower() == subdomain.lower()
+                    and host["RecordType"].upper() == "A"
+                    and (not target_ip or host["Address"] == target_ip)
+                )
+                if is_match:
+                    removed = True
+                    removed_ip = host.get("Address", removed_ip)
+                else:
+                    remaining_hosts.append(host)
+
+            if not removed:
+                msg = f"Namecheap A record for '{subdomain}.{sld}.{tld}' already absent."
+                logger.info(msg)
+                return DNSRecordResult(
+                    success=True,
+                    domain=clean_domain,
+                    record_type="A",
+                    target_ip=removed_ip,
+                    provider=self.provider_name,
+                    message=msg,
+                )
+
+            params = self._base_params("namecheap.domains.dns.setHosts", sld, tld)
+            for i, host in enumerate(remaining_hosts, start=1):
+                params[f"HostName{i}"] = host["HostName"]
+                params[f"RecordType{i}"] = host["RecordType"]
+                params[f"Address{i}"] = host["Address"]
+                params[f"TTL{i}"] = str(host.get("TTL", ttl))
+                if host.get("RecordType") == "MX":
+                    params[f"MXPref{i}"] = str(host.get("MXPref", 10))
+
+            resp = self._client.post(self.endpoint, data=params)
+            resp.raise_for_status()
+
+            root = ET.fromstring(resp.text)
+            status = root.attrib.get("Status", "").upper()
+            if status != "OK":
+                errors = [elem.text for elem in root.findall(".//{*}Error")]
+                err_msg = "; ".join(filter(None, errors)) or "Unknown error"
+                raise RuntimeError(f"Namecheap setHosts failed: {err_msg}")
+
+            msg = f"Successfully deleted Namecheap A record for '{subdomain}.{sld}.{tld}'."
+            logger.info(msg)
+            return DNSRecordResult(
+                success=True,
+                domain=clean_domain,
+                record_type="A",
+                target_ip=removed_ip,
+                provider=self.provider_name,
+                message=msg,
+            )
+        except Exception as exc:
+            msg = f"Failed to delete Namecheap record for '{clean_domain}': {exc}"
+            logger.error(msg)
+            return DNSRecordResult(
+                success=False,
+                domain=clean_domain,
+                record_type="A",
+                target_ip=target_ip or "",
+                provider=self.provider_name,
+                message=msg,
+            )

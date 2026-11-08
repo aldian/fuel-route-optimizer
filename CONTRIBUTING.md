@@ -154,8 +154,9 @@ python manage.py spectacular --validate
 # 5. Run full test suite with 95% coverage gate
 pytest tests/ --cov=apps --cov-branch --cov-report=term-missing --cov-fail-under=95
 
-# 6. Test Zero-to-Production Deploy Wizard dry run
+# 6. Test Zero-to-Production Deploy & Ephemeral Teardown dry runs
 ./bin/spotter-deploy --target docker-vps --domain api.example.com --non-interactive --dry-run
+./bin/spotter-destroy --target docker-vps --domain api.example.com --dry-run
 ```
 
 ---

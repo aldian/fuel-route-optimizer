@@ -77,3 +77,30 @@ class DNSManager:
             results.append(res)
 
         return results
+
+    def delete_domains(self, domains: list[str], target_ip: str | None = None, ttl: int = 300) -> list[DNSRecordResult]:
+        """Delete A records for all specified domains during environment teardown."""
+        results: list[DNSRecordResult] = []
+        if not self.provider:
+            for d in domains:
+                if not d or d in ("localhost", "127.0.0.1"):
+                    continue
+                results.append(
+                    DNSRecordResult(
+                        success=False,
+                        domain=d,
+                        record_type="A",
+                        target_ip=target_ip or "",
+                        provider="None",
+                        message="No automated DNS provider configured; record must be removed manually.",
+                    )
+                )
+            return results
+
+        for domain in domains:
+            if not domain or domain in ("localhost", "127.0.0.1"):
+                continue
+            res = self.provider.delete_a_record(domain, target_ip=target_ip, ttl=ttl)
+            results.append(res)
+
+        return results

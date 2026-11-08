@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Standalone wrapper for one-command ephemeral demo teardown & cost-saving destruction.
+# Usage:
+#   ./bin/spotter-destroy
+#   ./bin/spotter-destroy --dry-run
+#   ./bin/spotter-destroy --target k8s --destroy-cluster --yes
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+
+if [ -x "${PROJECT_ROOT}/.venv/bin/python" ]; then
+    PYTHON_BIN="${PROJECT_ROOT}/.venv/bin/python"
+else
+    PYTHON_BIN="python3"
+fi
+
+exec "${PYTHON_BIN}" "${PROJECT_ROOT}/manage.py" destroy_deployment "$@"

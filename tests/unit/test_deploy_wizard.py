@@ -193,3 +193,161 @@ def test_deploy_wizard_interactive_namecheap_prompts() -> None:
         )
     output = out.getvalue()
     assert "[DRY RUN] Would update NAMECHEAP A-records: api.example.com, staging-api.example.com -> 203.0.113.77" in output
+
+
+# ============================================================================
+# Ephemeral Demo Teardown Tests (destroy_deployment / ./bin/spotter-destroy)
+# ============================================================================
+
+def test_destroy_deployment_blocked_when_feature_flag_disabled() -> None:
+    from django.core.management.base import CommandError
+    from apps.common.flags import flags
+
+    flags.set_flag("ALLOW_EPHEMERAL_TEARDOWN", False)
+    try:
+        with pytest.raises(CommandError, match="ALLOW_EPHEMERAL_TEARDOWN"):
+            call_command("destroy_deployment", target="docker-vps", yes=True, dry_run=True)
+
+        # Verify --force overrides the disabled feature flag
+        out = io.StringIO()
+        call_command("destroy_deployment", target="docker-vps", yes=True, force=True, dry_run=True, stdout=out)
+        assert "Teardown complete!" in out.getvalue()
+    finally:
+        flags.delete_flag("ALLOW_EPHEMERAL_TEARDOWN")
+
+
+def test_destroy_deployment_interactive_cancel() -> None:
+    out = io.StringIO()
+    with patch("builtins.input", return_value="n"):
+        call_command("destroy_deployment", target="docker-vps", stdout=out)
+    assert "Teardown cancelled by operator" in out.getvalue()
+
+
+def test_destroy_deployment_k8s_and_cluster_dry_run() -> None:
+    out = io.StringIO()
+    call_command(
+        "destroy_deployment",
+        target="k8s",
+        k8s_provider="gcp-gke",
+        destroy_cluster=True,
+        cluster_name="demo-gke-cluster",
+        region="us-central1",
+        domain="api.demo.example.com",
+        staging_domain="staging-api.demo.example.com",
+        dns_provider="route53",
+        dry_run=True,
+        stdout=out,
+    )
+    output = out.getvalue()
+    assert "[DRY RUN] Would delete ROUTE53 A-records for: api.demo.example.com, staging-api.demo.example.com" in output
+    assert "gcloud container clusters delete demo-gke-cluster --region=us-central1 --quiet" in output
+
+    # Also test aws-eks and azure-aks cluster deletion dry-runs
+    out_eks = io.StringIO()
+    call_command(
+        "destroy_deployment",
+        target="k8s",
+        k8s_provider="aws-eks",
+        destroy_cluster=True,
+        cluster_name="demo-eks",
+        dry_run=True,
+        stdout=out_eks,
+    )
+    assert "eksctl delete cluster --name demo-eks" in out_eks.getvalue()
+
+    out_aks = io.StringIO()
+    call_command(
+        "destroy_deployment",
+        target="k8s",
+        k8s_provider="azure-aks",
+        destroy_cluster=True,
+        cluster_name="demo-aks",
+        dry_run=True,
+        stdout=out_aks,
+    )
+    assert "az aks delete --name demo-aks" in out_aks.getvalue()
+
+
+def test_destroy_deployment_terraform_and_paas_dry_run() -> None:
+    for cloud_target in ("gcp", "aws", "azure"):
+        out = io.StringIO()
+        call_command("destroy_deployment", target=cloud_target, dry_run=True, stdout=out)
+        assert f"terraform -chdir=deploy/terraform/{cloud_target} destroy -auto-approve" in out.getvalue()
+
+    out_paas = io.StringIO()
+    call_command("destroy_deployment", target="paas", dry_run=True, stdout=out_paas)
+    assert "flyctl apps destroy fuel-route-optimizer --yes" in out_paas.getvalue()
+
+
+@pytest.mark.django_db
+def test_deploy_then_destroy_full_lifecycle_execution() -> None:
+    # 1. Run deploy_wizard to generate .env.production and deployment_state.json
+    mock_upsert = DNSRecordResult(
+        success=True,
+        domain="api.demo.example.com",
+        record_type="A",
+        target_ip="198.51.100.42",
+        provider="AWS Route 53",
+        message="Created",
+    )
+    with patch("apps.stations.dns.route53.Route53DNSProvider.upsert_a_record", return_value=mock_upsert):
+        call_command(
+            "deploy_wizard",
+            target="docker-vps",
+            domain="api.demo.example.com",
+            staging_domain="staging-api.demo.example.com",
+            secret_key="my-super-secret-key-for-test-37cec3b1",
+            dns_provider="route53",
+            route53_zone_id="ZDEMO123",
+            dns_target_ip="198.51.100.42",
+            non_interactive=True,
+            stdout=io.StringIO(),
+        )
+
+    state_path = settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json"
+    env_path = settings.BASE_DIR / ".env.production"
+    assert state_path.exists()
+    assert env_path.exists()
+
+    # 2. Run destroy_deployment (auto-reads deployment_state.json, deletes DNS, runs docker compose down, cleans files)
+    mock_del = DNSRecordResult(
+        success=True,
+        domain="api.demo.example.com",
+        record_type="A",
+        target_ip="198.51.100.42",
+        provider="AWS Route 53",
+        message="Deleted from Route 53",
+    )
+    mock_proc = MagicMock(stdout="Removed container fuel-route-optimizer\n", returncode=0)
+    out = io.StringIO()
+    with (
+        patch("apps.stations.dns.route53.Route53DNSProvider.delete_a_record", return_value=mock_del),
+        patch("subprocess.run", return_value=mock_proc),
+    ):
+        call_command("destroy_deployment", yes=True, stdout=out)
+
+    output = out.getvalue()
+    assert "Loaded deployment state" in output
+    assert "Deleting DNS A-records via ROUTE53" in output
+    assert "Deleted from Route 53" in output
+    assert not env_path.exists()
+    assert not state_path.exists()
+
+
+def test_destroy_deployment_missing_cli_tool_and_error_handling() -> None:
+    from django.core.management.base import CommandError
+    import subprocess
+
+    # Missing CLI binary should log a warning and continue gracefully
+    out = io.StringIO()
+    with patch("subprocess.run", side_effect=FileNotFoundError("docker not found")):
+        call_command("destroy_deployment", target="docker-vps", keep_local_artifacts=True, yes=True, stdout=out)
+    assert "not installed locally; skipped" in out.getvalue()
+
+    # Non-zero exit code from CLI tool should raise CommandError
+    with patch(
+        "subprocess.run",
+        side_effect=subprocess.CalledProcessError(returncode=1, cmd=["docker"], stderr="daemon error"),
+    ):
+        with pytest.raises(CommandError, match="Infrastructure teardown command failed"):
+            call_command("destroy_deployment", target="docker-vps", keep_local_artifacts=True, yes=True)

@@ -24,16 +24,23 @@ variable "image" {
   description = "Container image URL"
 }
 
+variable "min_instances" {
+  type        = number
+  default     = 0
+  description = "Minimum Cloud Run instances (default 0 for scale-to-zero cost savings during demos)"
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
 }
 
-# Cloud Run v2 Service
+# Cloud Run v2 Service (Scale-to-Zero enabled by default for demo cost savings)
 resource "google_cloud_run_v2_service" "app" {
-  name     = "fuel-route-optimizer"
-  location = var.region
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "fuel-route-optimizer"
+  location            = var.region
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = false
 
   template {
     containers {
@@ -66,7 +73,7 @@ resource "google_cloud_run_v2_service" "app" {
       }
     }
     scaling {
-      min_instance_count = 1
+      min_instance_count = var.min_instances
       max_instance_count = 10
     }
   }

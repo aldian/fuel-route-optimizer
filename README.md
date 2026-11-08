@@ -334,6 +334,23 @@ python manage.py check_migration_safety --fail-on-warning
 - **Blue-Green Deployment Overlay**: `deploy/k8s/overlays/blue-green/` allows instantaneous traffic pointer switches (< 1 second) via `./deploy/k8s/overlays/blue-green/switch_traffic.sh [blue|green]`.
 - **Canary Deployment Overlay**: `deploy/k8s/overlays/canary/` provisions a 10% traffic-weighted canary ingress.
 
+### 7.6 One-Command Ephemeral Demo Teardown (`$0/hr` Cost Saver)
+When deploying the application for a live demonstration, you can tear down **all** provisioned cloud infrastructure, Kubernetes Ingresses/Load Balancers, Docker volumes, and automated Route 53 / Namecheap DNS `A` records with a single command immediately after the demo so ongoing cloud costs drop to **`$0.00/hr`**:
+
+```bash
+# Automatically reads deploy/generated/deployment_state.json written by spotter-deploy
+./bin/spotter-destroy
+
+# Preview all DNS & infrastructure teardown commands without executing them
+./bin/spotter-destroy --dry-run
+
+# Non-interactive teardown including managed Kubernetes cluster deletion (GKE / EKS / AKS)
+./bin/spotter-destroy --target k8s --k8s-provider gcp-gke --destroy-cluster --yes
+```
+
+- **1-Click GitHub Actions Demo Teardown**: Trigger [`.github/workflows/destroy.yml`](.github/workflows/destroy.yml) (*"Destroy Ephemeral Demo Deployment (Save Costs)"*) from the GitHub Actions UI and type `DESTROY` to tear down the environment remotely.
+- **Feature Flag Protection for Permanent Production**: Controlled by the `ALLOW_EPHEMERAL_TEARDOWN` feature flag (`True` by default during demo phase). Once transitioning to a permanent production environment, run `./bin/spotter-feature-flag --set ALLOW_EPHEMERAL_TEARDOWN off` to block accidental teardowns.
+
 ---
 
 ## 8. Spec-Driven Development (SDD) — Authoritative Specification Suite

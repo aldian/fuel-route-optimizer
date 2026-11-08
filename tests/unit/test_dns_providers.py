@@ -404,3 +404,146 @@ def test_dns_manager_sync_domains_with_provider() -> None:
     assert results[0].domain == "api.example.com"
     assert results[0].success is True
     mock_provider.upsert_a_record.assert_called_once_with("api.example.com", "1.2.3.4", ttl=300)
+
+
+# ============================================================================
+# 5. DNS Record Deletion Tests (Ephemeral Demo Teardown)
+# ============================================================================
+
+def test_route53_delete_a_record_explicit_ip() -> None:
+    mock_client = MagicMock()
+    mock_client.change_resource_record_sets.return_value = {
+        "ChangeInfo": {"Id": "/change/CDELETE123"}
+    }
+    provider = Route53DNSProvider(hosted_zone_id="Z111222", boto3_client=mock_client)
+    res = provider.delete_a_record("api.example.com", target_ip="203.0.113.10", ttl=300)
+    assert res.success is True
+    assert res.domain == "api.example.com"
+    assert res.target_ip == "203.0.113.10"
+    assert "CDELETE123" in res.message
+
+
+def test_route53_delete_a_record_auto_lookup_and_absent() -> None:
+    mock_client = MagicMock()
+    mock_client.list_resource_record_sets.return_value = {
+        "ResourceRecordSets": [
+            {
+                "Name": "api.example.com.",
+                "Type": "A",
+                "TTL": 600,
+                "ResourceRecords": [{"Value": "203.0.113.55"}],
+            }
+        ]
+    }
+    mock_client.change_resource_record_sets.return_value = {
+        "ChangeInfo": {"Id": "/change/CDELAUTO"}
+    }
+    provider = Route53DNSProvider(hosted_zone_id="Z111222", boto3_client=mock_client)
+    res = provider.delete_a_record("api.example.com")
+    assert res.success is True
+    assert res.target_ip == "203.0.113.55"
+
+    # Now test when record is already absent
+    mock_client.list_resource_record_sets.return_value = {"ResourceRecordSets": []}
+    res_absent = provider.delete_a_record("missing.example.com")
+    assert res_absent.success is True
+    assert "already absent" in res_absent.message
+
+
+def test_route53_delete_a_record_failure() -> None:
+    mock_client = MagicMock()
+    mock_client.change_resource_record_sets.side_effect = RuntimeError("AWS Route53 Error")
+    provider = Route53DNSProvider(hosted_zone_id="Z111222", boto3_client=mock_client)
+    res = provider.delete_a_record("api.example.com", target_ip="203.0.113.10")
+    assert res.success is False
+    assert "Failed to delete Route 53 record" in res.message
+
+
+def test_namecheap_delete_a_record_success_and_absent() -> None:
+    get_hosts_xml = """<?xml version="1.0" encoding="utf-8"?>
+    <ApiResponse Status="OK" xmlns="http://api.namecheap.com/xml.response">
+      <CommandResponse Type="namecheap.domains.dns.getHosts">
+        <DomainDNSGetHostsResult Domain="example.com">
+          <host HostId="1" Name="api" Type="A" Address="203.0.113.25" TTL="300" />
+          <host HostId="2" Name="@" Type="A" Address="10.0.0.2" TTL="300" />
+          <host HostId="3" Name="mail" Type="MX" Address="mx.example.com" TTL="1800" MXPref="10" />
+        </DomainDNSGetHostsResult>
+      </CommandResponse>
+    </ApiResponse>"""
+
+    set_hosts_ok = """<?xml version="1.0" encoding="utf-8"?>
+    <ApiResponse Status="OK" xmlns="http://api.namecheap.com/xml.response">
+      <CommandResponse Type="namecheap.domains.dns.setHosts">
+        <DomainDNSSetHostsResult Domain="example.com" IsSuccess="true" />
+      </CommandResponse>
+    </ApiResponse>"""
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = MagicMock(text=get_hosts_xml)
+    mock_client.post.return_value = MagicMock(text=set_hosts_ok)
+
+    nc = NamecheapDNSProvider(api_user="u", api_key="k", http_client=mock_client)
+    res = nc.delete_a_record("api.example.com")
+    assert res.success is True
+    assert res.target_ip == "203.0.113.25"
+
+    # Verify remaining hosts (@ and mail MX) were preserved
+    posted_data = mock_client.post.call_args[1]["data"]
+    assert posted_data["HostName1"] == "@"
+    assert posted_data["HostName2"] == "mail"
+    assert posted_data["MXPref2"] == "10"
+    assert "HostName3" not in posted_data
+
+    # Test already absent domain
+    res_absent = nc.delete_a_record("nonexistent.example.com")
+    assert res_absent.success is True
+    assert "already absent" in res_absent.message
+
+
+def test_namecheap_delete_a_record_failure() -> None:
+    get_hosts_xml = """<?xml version="1.0" encoding="utf-8"?>
+    <ApiResponse Status="OK" xmlns="http://api.namecheap.com/xml.response">
+      <CommandResponse Type="namecheap.domains.dns.getHosts">
+        <DomainDNSGetHostsResult Domain="example.com">
+          <host HostId="1" Name="api" Type="A" Address="203.0.113.25" TTL="300" />
+        </DomainDNSGetHostsResult>
+      </CommandResponse>
+    </ApiResponse>"""
+
+    set_hosts_fail = """<?xml version="1.0" encoding="utf-8"?>
+    <ApiResponse Status="ERROR" xmlns="http://api.namecheap.com/xml.response">
+      <Errors>
+        <Error Number="500">Server error</Error>
+      </Errors>
+    </ApiResponse>"""
+
+    mock_client = MagicMock()
+    mock_client.get.return_value = MagicMock(text=get_hosts_xml)
+    mock_client.post.return_value = MagicMock(text=set_hosts_fail)
+
+    nc = NamecheapDNSProvider(api_user="u", api_key="k", http_client=mock_client)
+    res = nc.delete_a_record("api.example.com")
+    assert res.success is False
+    assert "Server error" in res.message
+
+
+def test_dns_manager_delete_domains() -> None:
+    mgr_none = DNSManager(provider=None)
+    res_none = mgr_none.delete_domains(["localhost", "api.example.com"])
+    assert len(res_none) == 1
+    assert res_none[0].success is False
+
+    mock_provider = MagicMock(spec=DNSProvider)
+    mock_provider.delete_a_record.return_value = DNSRecordResult(
+        success=True,
+        domain="api.example.com",
+        record_type="A",
+        target_ip="1.2.3.4",
+        provider="MockDNS",
+        message="Deleted",
+    )
+    mgr = DNSManager(provider=mock_provider)
+    res = mgr.delete_domains(["localhost", "api.example.com"], target_ip="1.2.3.4")
+    assert len(res) == 1
+    assert res[0].success is True
+    mock_provider.delete_a_record.assert_called_once_with("api.example.com", target_ip="1.2.3.4", ttl=300)

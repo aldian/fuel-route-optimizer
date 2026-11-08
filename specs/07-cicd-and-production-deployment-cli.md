@@ -1,6 +1,6 @@
-# 07 — Multi-Target CI/CD & Zero-to-Production Interactive CLI Specification
+# 07 — Multi-Target CI/CD, Zero-to-Production Interactive CLI & Ephemeral Demo Teardown Specification
 
-**Traces To**: `REQ-OPS-001`, `REQ-OPS-002`, `REQ-STACK-001`, `REQ-QUAL-001`, `REQ-QUAL-002`
+**Traces To**: `REQ-OPS-001`, `REQ-OPS-002`, `REQ-OPS-003`, `REQ-OPS-006`, `REQ-STACK-001`, `REQ-QUAL-001`, `REQ-QUAL-002`
 
 ---
 
@@ -264,7 +264,59 @@ sequenceDiagram
 
 ---
 
-## 5. Testing Requirements for the Deployment CLI & CI/CD Manifests
+## 5. One-Command Ephemeral Demo Teardown & Cost-Saving Destruction (`REQ-OPS-006`)
+
+Because the initial production deployment is designed for live evaluation and demonstration, operators must be able to **destroy every provisioned cloud resource, load balancer, container, volume, and DNS record with a single command** immediately after the demo so ongoing cloud costs drop to **`$0.00/hr`** (and dangling DNS records cannot be hijacked via subdomain takeover).
+
+```mermaid
+flowchart TD
+    DemoEnd["Demonstration Complete"] --> CLI["./bin/spotter-destroy<br/>(python manage.py destroy_deployment)"]
+    DemoEnd --> GHA["1-Click GitHub Actions<br/>(.github/workflows/destroy.yml)"]
+
+    CLI --> FlagGate{"Feature Flag Check:<br/>ALLOW_EPHEMERAL_TEARDOWN<br/>(or --force)"}
+    FlagGate -- "Disabled in Permanent Prod" --> Block["Abort: Protected Environment"]
+    FlagGate -- "Enabled (Default for Demo)" --> LoadState["Read deploy/generated/deployment_state.json<br/>(or CLI flags)"]
+
+    LoadState --> Step1["1. Delete DNS A-Records<br/>(Route 53 DELETE / Namecheap setHosts Filter)"]
+    Step1 --> Step2["2. Destroy Compute, DB & Load Balancers<br/>(K8s Ingress+Namespaces / Terraform destroy / Docker down -v / Fly destroy)"]
+    Step2 --> Step3["3. Clean Local Secrets & Reset Manifests<br/>(.env.production, set_github_secrets.sh, K8s overlays)"]
+    Step3 --> ZeroCost["$0.00/hr Cloud Billing & Clean Git Working Tree"]
+```
+
+### 5.1 Automatic State Tracking (`deploy/generated/deployment_state.json`)
+When `python manage.py deploy_wizard` (`./bin/spotter-deploy`) provisions an environment, it writes a non-secret state manifest to `deploy/generated/deployment_state.json` containing:
+- `target` (`docker-vps`, `aws`, `gcp`, `azure`, `k8s`, `paas`)
+- `k8s_provider` (`gcp-gke`, `aws-eks`, `azure-aks`, `generic`)
+- `domain` and `staging_domain`
+- `dns_provider` (`none`, `route53`, `namecheap`), `dns_target_ip`, `route53_zone_id`, `namecheap_api_user`, `namecheap_client_ip`, `namecheap_sandbox`
+- `cloud_region`
+
+### 5.2 Automated DNS Record Deletion (`delete_a_record` & `delete_domains`)
+- **AWS Route 53 (`Route53DNSProvider.delete_a_record`)**:
+  - Queries `list_resource_record_sets` in the Hosted Zone to locate the exact `A` record (`TTL` and `ResourceRecords`) if `target_ip` is not explicitly supplied.
+  - Submits an atomic `DELETE` batch via `change_resource_record_sets`.
+  - If the record is already absent, returns `DNSRecordResult(success=True)` idempotently.
+- **Namecheap (`NamecheapDNSProvider.delete_a_record`)**:
+  - Fetches all existing records via `namecheap.domains.dns.getHosts`.
+  - Removes only the matching `A` record (`HostName == subdomain` and `RecordType == "A"`), preserving all `MX`, `TXT`, `CNAME`, and unrelated host records, and commits via `namecheap.domains.dns.setHosts`.
+
+### 5.3 Multi-Target Teardown Actions (`./bin/spotter-destroy`)
+
+| Target | Teardown Commands Executed by `destroy_deployment` | Cost Impact |
+| :--- | :--- | :--- |
+| **`docker-vps`** | `docker compose -f docker-compose.prod.yml down --volumes --rmi local --remove-orphans` | Frees 100% of container RAM, CPU, and disk volumes. |
+| **`k8s`** | `kubectl delete -k deploy/k8s/overlays/<provider> --ignore-not-found=true` + `kubectl delete namespace production staging --ignore-not-found=true` + optional `--destroy-cluster` (`gcloud container clusters delete` / `eksctl delete cluster` / `az aks delete`) | Releases billed Cloud Load Balancers, Static IPs, PersistentVolumeClaims, and (with `--destroy-cluster`) GKE/EKS/AKS clusters. |
+| **`aws` / `gcp` / `azure`** | `terraform -chdir=deploy/terraform/<target> destroy -auto-approve` | Destroys Cloud Run / ECS / Container Apps, Cloud SQL / RDS, and VPC NAT/Load Balancers (`$0.00/hr`). |
+| **`paas`** | `flyctl apps destroy fuel-route-optimizer --yes` | Terminates Fly.io / PaaS machines and volumes. |
+| **Local Artifacts** | Deletes `.env.production`, `deploy/generated/set_github_secrets.sh`, `deploy/generated/deployment_state.json`, and restores `deploy/k8s/overlays/gcp-gke*/{certificate,ingress_patch}.yaml` to default templates. | Leaves repository clean with zero lingering secrets. |
+
+### 5.4 Feature Flag Protection Against Accidental Production Teardown
+- Controlled by `ALLOW_EPHEMERAL_TEARDOWN` in `config/settings/base.py` (`FEATURE_FLAGS["ALLOW_EPHEMERAL_TEARDOWN"] = True` by default during demonstration phase).
+- Once a team transitions from ephemeral demo deployments to a long-lived production environment with customer data, running `./bin/spotter-feature-flag --set ALLOW_EPHEMERAL_TEARDOWN off` immediately locks out `destroy_deployment` unless `--force` is explicitly provided.
+
+---
+
+## 6. Testing Requirements for the Deployment & Teardown CLI (`>= 95%` Coverage)
 
 In accordance with `REQ-QUAL-001` (`>= 95%` unit test coverage) and `REQ-QUAL-002` (E2E testing):
 1. **Unit Tests (`tests/unit/test_deploy_wizard.py` and `tests/unit/test_dns_providers.py` — `>= 95%` coverage)**:

@@ -268,13 +268,30 @@ class Command(BaseCommand):
             f.write(env_content)
         os.chmod(env_path, 0o600)
 
-        # Write deploy helper
+        # Write deploy helper & deployment state manifest (for ./bin/spotter-destroy)
         deploy_dir = settings.BASE_DIR / "deploy" / "generated"
         deploy_dir.mkdir(parents=True, exist_ok=True)
         gh_script_path = deploy_dir / "set_github_secrets.sh"
         with open(gh_script_path, "w", encoding="utf-8") as f:
             f.write(gh_secrets_content)
         os.chmod(gh_script_path, 0o755)
+
+        state_path = deploy_dir / "deployment_state.json"
+        state_payload = {
+            "target": target,
+            "k8s_provider": k8s_provider,
+            "cloud_region": cloud_region,
+            "domain": domain,
+            "staging_domain": staging_domain,
+            "dns_provider": dns_provider,
+            "dns_target_ip": dns_target_ip,
+            "route53_zone_id": route53_zone_id,
+            "namecheap_api_user": nc_user,
+            "namecheap_client_ip": nc_client_ip or "127.0.0.1",
+            "namecheap_sandbox": nc_sandbox,
+        }
+        with open(state_path, "w", encoding="utf-8") as f:
+            json.dump(state_payload, f, indent=2)
 
         if target == "k8s":
             self._patch_k8s_domains(domain, staging_domain)
@@ -318,7 +335,8 @@ class Command(BaseCommand):
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nDeployment configuration for target '{target}' is ready! "
-                f"Run 'docker compose -f docker-compose.prod.yml up -d' or push to Git for automated CI/CD."
+                f"Run 'docker compose -f docker-compose.prod.yml up -d' or push to Git for automated CI/CD.\n"
+                f"Tip: After your demonstration, run './bin/spotter-destroy' to tear down all resources and DNS records ($0/hr cost)."
             )
         )
 

@@ -60,3 +60,8 @@ class DNSProvider(ABC):
     def upsert_a_record(self, domain: str, target_ip: str, ttl: int = 300) -> DNSRecordResult:
         """Create or update an A record for the given domain pointing to target_ip."""
         ...
+
+    @abstractmethod
+    def delete_a_record(self, domain: str, target_ip: str | None = None, ttl: int = 300) -> DNSRecordResult:
+        """Delete an A record for the given domain during environment teardown."""
+        ...
