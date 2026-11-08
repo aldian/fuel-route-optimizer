@@ -97,13 +97,15 @@ def test_deploy_wizard_interactive_and_production_write(tmp_path: Path) -> None:
     # Mock inputs:
     # 1. target = "k8s" [5]
     # 2. domain = "api.example.com"
-    # 3. secret key choice = 1 (auto-generate)
-    # 4. database url = "postgresql://user:pass@db:5432/app"
-    # 5. redis url = "redis://redis:6379/0"
-    # 6. k8s provider = "1" (gcp-gke)
+    # 3. staging domain = "staging-api.example.com"
+    # 4. secret key choice = 1 (auto-generate)
+    # 5. database url = "postgresql://user:pass@db:5432/app"
+    # 6. redis url = "redis://redis:6379/0"
+    # 7. k8s provider = "1" (gcp-gke)
     inputs = [
         "5",  # k8s
         "api.example.com",  # domain
+        "staging-api.example.com",  # staging domain
         "1",  # auto-gen secret key
         "postgresql://user:pass@db:5432/app",  # db url
         "redis://redis:6379/0",  # redis url
@@ -120,13 +122,16 @@ def test_deploy_wizard_interactive_and_production_write(tmp_path: Path) -> None:
     output = out.getvalue()
     assert "Deployment configuration for target 'k8s' is ready!" in output
     assert "Active US Fuel Stations" in output
+    assert "DNS & DOMAIN CONFIGURATION GUIDE" in output
 
     # Check generated .env.production
     from django.conf import settings
     env_path = settings.BASE_DIR / ".env.production"
     assert env_path.exists()
     content = env_path.read_text(encoding="utf-8")
-    assert "ALLOWED_HOSTS=api.example.com,127.0.0.1,localhost" in content
+    assert "ALLOWED_HOSTS=api.example.com,staging-api.example.com,127.0.0.1,localhost" in content
+    assert "PRIMARY_DOMAIN=api.example.com" in content
+    assert "STAGING_DOMAIN=staging-api.example.com" in content
     assert "DATABASE_URL=postgresql://user:pass@db:5432/app" in content
     assert "REDIS_URL=redis://redis:6379/0" in content
 

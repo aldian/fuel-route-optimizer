@@ -4,4 +4,4 @@ metadata:
   name: fuel-optimizer-certificate
 spec:
   domains:
-    - api.fuel-optimizer.example.com
+    - api.example.com

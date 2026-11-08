@@ -30,6 +30,11 @@ class Command(BaseCommand):
             help="Primary public domain (e.g. api.example.com).",
         )
         parser.add_argument(
+            "--staging-domain",
+            type=str,
+            help="Staging domain (e.g. staging-api.example.com).",
+        )
+        parser.add_argument(
             "--secret-key",
             type=str,
             help="Explicit DJANGO_SECRET_KEY (if omitted, auto-generated).",
@@ -106,7 +111,16 @@ class Command(BaseCommand):
                 ans = input("\nEnter public domain for API (e.g. api.fuel-optimizer.com) [default: localhost]: ").strip()
                 domain = ans if ans else "localhost"
 
-        allowed_hosts = f"{domain},127.0.0.1,localhost"
+        staging_domain = options.get("staging_domain") or cfg.get("staging_domain")
+        if not staging_domain:
+            if non_interactive or domain == "localhost":
+                staging_domain = f"staging-{domain}" if domain != "localhost" else "staging.localhost"
+            else:
+                staging_default = f"staging-{domain}"
+                ans = input(f"Enter staging domain [default: {staging_default}]: ").strip()
+                staging_domain = ans if ans else staging_default
+
+        allowed_hosts = f"{domain},{staging_domain},127.0.0.1,localhost" if domain != "localhost" else "localhost,127.0.0.1"
 
         # 3. Secret Key
         secret_key = options.get("secret_key") or cfg.get("secret_key")
@@ -157,6 +171,7 @@ class Command(BaseCommand):
             database_url=database_url,
             redis_url=redis_url,
             domain=domain,
+            staging_domain=staging_domain,
         )
 
         gh_secrets_content = self._render_github_secrets_script(
@@ -164,6 +179,8 @@ class Command(BaseCommand):
             allowed_hosts=allowed_hosts,
             database_url=database_url,
             redis_url=redis_url,
+            domain=domain,
+            staging_domain=staging_domain,
         )
 
         if dry_run:
@@ -171,6 +188,7 @@ class Command(BaseCommand):
             # Redact secret key in preview
             redacted_env = re.sub(r"DJANGO_SECRET_KEY=.*", "DJANGO_SECRET_KEY=********[REDACTED]", env_content)
             self.stdout.write(redacted_env)
+            self._print_dns_guide(domain, staging_domain, target)
             self.stdout.write(self.style.SUCCESS(f"\n[DRY RUN] Target selected: {target} (K8s: {k8s_provider}). Dry run complete."))
             return
 
@@ -188,6 +206,10 @@ class Command(BaseCommand):
             f.write(gh_secrets_content)
         os.chmod(gh_script_path, 0o755)
 
+        if target == "k8s":
+            self._patch_k8s_domains(domain, staging_domain)
+            self.stdout.write(self.style.SUCCESS("[2.5/3] Patched Kubernetes Ingress & Certificate manifests with domain."))
+
         self.stdout.write(self.style.SUCCESS(f"\n[1/3] Successfully wrote {env_path} (mode 0600)."))
         self.stdout.write(self.style.SUCCESS(f"[2/3] Generated GitHub Actions secret helper at {gh_script_path}."))
 
@@ -201,12 +223,67 @@ class Command(BaseCommand):
         gaz_count = USPlaceGazetteer.objects.count()
         self.stdout.write(f"  * US Gazetteer Entries: {gaz_count}")
 
+        self._print_dns_guide(domain, staging_domain, target)
+
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nDeployment configuration for target '{target}' is ready! "
                 f"Run 'docker compose -f docker-compose.prod.yml up -d' or push to Git for automated CI/CD."
             )
         )
+
+    def _print_dns_guide(self, domain: str, staging_domain: str, target: str) -> None:
+        self.stdout.write("\n" + "=" * 76)
+        self.stdout.write(self.style.MIGRATE_HEADING("                  DNS & DOMAIN CONFIGURATION GUIDE"))
+        self.stdout.write("=" * 76)
+        self.stdout.write("Configure the following DNS records with your domain registrar or DNS provider:")
+        self.stdout.write(f"  * Production Hostname : {domain}")
+        self.stdout.write(f"  * Staging Hostname    : {staging_domain}")
+        self.stdout.write("\nDNS Records to create:")
+        self.stdout.write(f"  [A Record]     {domain:<32} -> <External Load Balancer IP>")
+        self.stdout.write(f"  [A Record]     {staging_domain:<32} -> <External Load Balancer IP>")
+        if target == "k8s":
+            self.stdout.write("\nTo retrieve your External Ingress IP in GCP GKE:")
+            self.stdout.write("  kubectl get ingress -n production fuel-route-optimizer-ingress")
+            self.stdout.write("  kubectl get ingress -n staging staging-fuel-route-optimizer-ingress")
+            self.stdout.write("\nGoogle-managed SSL certificates will automatically provision once DNS propagates.")
+        elif target == "docker-vps":
+            self.stdout.write("\nTo retrieve your VPS public IP:")
+            self.stdout.write("  curl -s https://api.ipify.org")
+            self.stdout.write("\nCaddy reverse proxy will automatically provision Let's Encrypt TLS certificates.")
+        self.stdout.write("=" * 76 + "\n")
+
+    def _patch_k8s_domains(self, domain: str, staging_domain: str) -> None:
+        """Patch Kubernetes overlay manifests with user-specified domains."""
+        # Production overlay
+        prod_cert = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke" / "certificate.yaml"
+        if prod_cert.exists():
+            prod_cert.write_text(
+                f"apiVersion: networking.gke.io/v1\nkind: ManagedCertificate\nmetadata:\n  name: fuel-optimizer-certificate\nspec:\n  domains:\n    - {domain}\n",
+                encoding="utf-8",
+            )
+
+        prod_ing = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke" / "ingress_patch.yaml"
+        if prod_ing.exists():
+            prod_ing.write_text(
+                f"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: fuel-route-optimizer-ingress\n  annotations:\n    kubernetes.io/ingress.class: \"gce\"\n    networking.gke.io/managed-certificates: \"fuel-optimizer-certificate\"\nspec:\n  rules:\n    - host: {domain}\n      http:\n        paths:\n          - path: /*\n            pathType: ImplementationSpecific\n            backend:\n              service:\n                name: fuel-route-optimizer\n                port:\n                  number: 80\n",
+                encoding="utf-8",
+            )
+
+        # Staging overlay
+        stag_cert = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke-staging" / "certificate.yaml"
+        if stag_cert.exists():
+            stag_cert.write_text(
+                f"apiVersion: networking.gke.io/v1\nkind: ManagedCertificate\nmetadata:\n  name: staging-fuel-optimizer-certificate\nspec:\n  domains:\n    - {staging_domain}\n",
+                encoding="utf-8",
+            )
+
+        stag_ing = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke-staging" / "ingress_patch.yaml"
+        if stag_ing.exists():
+            stag_ing.write_text(
+                f"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: fuel-route-optimizer-ingress\n  annotations:\n    kubernetes.io/ingress.class: \"gce\"\n    networking.gke.io/managed-certificates: \"staging-fuel-optimizer-certificate\"\nspec:\n  rules:\n    - host: {staging_domain}\n      http:\n        paths:\n          - path: /*\n            pathType: ImplementationSpecific\n            backend:\n              service:\n                name: fuel-route-optimizer\n                port:\n                  number: 80\n",
+                encoding="utf-8",
+            )
 
     def _render_env_production(
         self,
@@ -215,6 +292,7 @@ class Command(BaseCommand):
         database_url: str,
         redis_url: str,
         domain: str,
+        staging_domain: str = "",
     ) -> str:
         return f"""# Production Environment Configuration
 # Generated by manage.py deploy_wizard
@@ -222,6 +300,7 @@ DJANGO_SETTINGS_MODULE=config.settings.production
 DJANGO_SECRET_KEY={secret_key}
 ALLOWED_HOSTS={allowed_hosts}
 PRIMARY_DOMAIN={domain}
+STAGING_DOMAIN={staging_domain}
 
 # Security Headers & HSTS
 SECURE_SSL_REDIRECT=True
@@ -242,6 +321,8 @@ EXTERNAL_READ_TIMEOUT_SEC=4.0
         allowed_hosts: str,
         database_url: str,
         redis_url: str,
+        domain: str = "",
+        staging_domain: str = "",
     ) -> str:
         return f"""#!/usr/bin/env bash
 # Helper script to set GitHub Actions Secrets via gh CLI
@@ -252,6 +333,12 @@ set -e
 echo "Setting GitHub Actions Secrets..."
 gh secret set DJANGO_SECRET_KEY --body "{secret_key}"
 gh secret set ALLOWED_HOSTS --body "{allowed_hosts}"
+if [ -n "{domain}" ]; then
+  gh secret set PRIMARY_DOMAIN --body "{domain}"
+fi
+if [ -n "{staging_domain}" ]; then
+  gh secret set STAGING_DOMAIN --body "{staging_domain}"
+fi
 if [ -n "{database_url}" ]; then
   gh secret set DATABASE_URL --body "{database_url}"
 fi

@@ -7,7 +7,7 @@ metadata:
     networking.gke.io/managed-certificates: "staging-fuel-optimizer-certificate"
 spec:
   rules:
-    - host: staging-api.fuel-optimizer.example.com
+    - host: staging-api.example.com
       http:
         paths:
           - path: /*

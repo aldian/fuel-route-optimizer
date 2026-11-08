@@ -4,4 +4,4 @@ metadata:
   name: staging-fuel-optimizer-certificate
 spec:
   domains:
-    - staging-api.fuel-optimizer.example.com
+    - staging-api.example.com
