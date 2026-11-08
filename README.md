@@ -339,10 +339,17 @@ All requirements and architectural boundaries were formally documented in `specs
 - [`specs/06-deployment-and-devops.md`](specs/06-deployment-and-devops.md): Multi-target CI/CD, K8s, Terraform, and Docker configurations.
 - [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md): Automated Route 53 & Namecheap DNS provisioning and Zero-to-Production CLI wizard.
 - [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md): Feature flags, Expand-Contract database migrations, and Canary / Blue-Green rollback operational guide.
+- [`specs/09-developer-rules-and-system-integrity.md`](specs/09-developer-rules-and-system-integrity.md): The 6 non-negotiable automated quality gates and rules of engagement.
 - [`specs/07-postman-and-video-walkthrough.md`](specs/07-postman-and-video-walkthrough.md): Postman Visualizer template and 5-minute video walkthrough guide.
 
 ---
 
-## 9. License
+## 9. Developer Rules & Contributing
+
+All contributors must read and follow the **[Contributing & Developer Rules Guide](CONTRIBUTING.md)** and review the **[Pull Request Template](.github/pull_request_template.md)** before submitting code.
+
+---
+
+## 10. License
 
 This project is licensed under the MIT License.
