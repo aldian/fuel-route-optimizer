@@ -11,9 +11,11 @@ scipy>=1.14.0
 httpx>=0.28.0
 boto3>=1.34.0
 
-# Production WSGI & Static Assets
+# Production WSGI, Static Assets, PostgreSQL & Redis Drivers
 gunicorn>=23.0.0
 whitenoise>=6.8.0
+psycopg[binary]>=3.2.0
+redis>=5.0.0
 
 # Development, Testing & Coverage (>= 95% Coverage Gate)
 pytest>=8.3.0

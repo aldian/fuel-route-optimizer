@@ -36,12 +36,14 @@ RUN groupadd -g 10001 appuser && \
 # Copy application source code and pre-geocoded data fixtures
 COPY --chown=appuser:appuser . .
 
-# Make entrypoint executable
-RUN chmod +x docker/entrypoint.sh bin/spotter-deploy
+# Make entrypoint and CLI wrappers executable
+RUN chmod +x docker/entrypoint.sh bin/spotter-*
 
-# Collect static assets
+# Collect static assets (using build-time placeholder secret key; runtime key is injected via env)
 USER appuser
-RUN python manage.py collectstatic --noinput
+RUN DJANGO_SECRET_KEY="build-time-collectstatic-placeholder-key-not-used-at-runtime" \
+    ALLOWED_HOSTS="localhost,127.0.0.1" \
+    python manage.py collectstatic --noinput
 
 EXPOSE 8000
 

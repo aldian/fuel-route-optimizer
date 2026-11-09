@@ -56,7 +56,10 @@ class RouteOptimizationService:
 
         # 1. Check Full Optimization Cache
         plan_cache_key = self._build_plan_cache_key(start_input, finish_input, vehicle_spec, data_ver)
-        cached_result = cache.get(plan_cache_key)
+        try:
+            cached_result = cache.get(plan_cache_key)
+        except Exception:
+            cached_result = None
         if cached_result is not None:
             cached_result.budget = budget
             cached_result.cache_hit = True
@@ -68,7 +71,10 @@ class RouteOptimizationService:
 
         # 3. Fetch Driving Route Geometry (OSRM -> Valhalla) with Route Cache
         route_cache_key = f"route:v1:{origin_loc.latitude:.4f},{origin_loc.longitude:.4f}:{dest_loc.latitude:.4f},{dest_loc.longitude:.4f}"
-        route_result: RouteResult | None = cache.get(route_cache_key)
+        try:
+            route_result: RouteResult | None = cache.get(route_cache_key)
+        except Exception:
+            route_result = None
 
         if route_result is None:
             origin_coords = (origin_loc.latitude, origin_loc.longitude)
@@ -76,7 +82,10 @@ class RouteOptimizationService:
             route_result = self.router.route(
                 origin_coords, dest_coords, budget, prefer_domestic=prefer_domestic
             )
-            cache.set(route_cache_key, route_result, timeout=86400)
+            try:
+                cache.set(route_cache_key, route_result, timeout=86400)
+            except Exception:
+                pass
 
         # 4. Spatial Corridor Query & Candidate Projection
         candidates = self.projector.project_candidates(
@@ -100,7 +109,10 @@ class RouteOptimizationService:
         )
 
         # Store in optimization cache
-        cache.set(plan_cache_key, opt_result, timeout=3600)
+        try:
+            cache.set(plan_cache_key, opt_result, timeout=3600)
+        except Exception:
+            pass
         return opt_result
 
     @staticmethod

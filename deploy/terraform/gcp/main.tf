@@ -129,6 +129,7 @@ resource "terraform_data" "build_and_push_image" {
   provisioner "local-exec" {
     working_dir = "${path.module}/../../.."
     command     = <<-EOT
+      set -e
       gcloud auth configure-docker ${var.region}-docker.pkg.dev --quiet
       docker build -t ${local.ar_image_uri} .
       docker push ${local.ar_image_uri}
@@ -198,6 +199,16 @@ resource "google_cloud_run_v2_service" "app" {
   ]
 
   template {
+    dynamic "vpc_access" {
+      for_each = var.provision_redis ? [1] : []
+      content {
+        network_interfaces {
+          network = "default"
+        }
+        egress = "PRIVATE_RANGES_ONLY"
+      }
+    }
+
     dynamic "volumes" {
       for_each = var.provision_postgres ? [1] : []
       content {
@@ -253,7 +264,8 @@ resource "google_cloud_run_v2_service" "app" {
         }
         initial_delay_seconds = 5
         period_seconds        = 10
-        failure_threshold     = 3
+        timeout_seconds       = 5
+        failure_threshold     = 24
       }
       liveness_probe {
         http_get {
@@ -261,6 +273,7 @@ resource "google_cloud_run_v2_service" "app" {
           port = 8000
         }
         period_seconds    = 15
+        timeout_seconds   = 5
         failure_threshold = 3
       }
     }

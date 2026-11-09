@@ -1,7 +1,7 @@
 """Base Django settings for fuel-route-optimizer project."""
 import os
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
@@ -73,15 +73,21 @@ ASGI_APPLICATION = "config.asgi.application"
 database_url = os.environ.get("DATABASE_URL", "").strip()
 if database_url:
     parsed_db = urlparse(database_url)
+    query_params = parse_qs(parsed_db.query)
     engine = "django.db.backends.postgresql" if parsed_db.scheme.startswith("postgres") else "django.db.backends.sqlite3"
+    db_host = parsed_db.hostname or (query_params.get("host", [""])[0] if "host" in query_params else "")
+    db_options: dict[str, object] = {}
+    if "sslmode" in query_params:
+        db_options["sslmode"] = query_params["sslmode"][0]
     DATABASES = {
         "default": {
             "ENGINE": engine,
             "NAME": parsed_db.path.lstrip("/"),
-            "USER": parsed_db.username or "",
-            "PASSWORD": parsed_db.password or "",
-            "HOST": parsed_db.hostname or "",
-            "PORT": parsed_db.port or "",
+            "USER": unquote(parsed_db.username) if parsed_db.username else "",
+            "PASSWORD": unquote(parsed_db.password) if parsed_db.password else "",
+            "HOST": db_host,
+            "PORT": str(parsed_db.port) if parsed_db.port else "",
+            "OPTIONS": db_options,
         }
     }
 else:
@@ -126,6 +132,10 @@ if redis_url:
             "BACKEND": "django.core.cache.backends.redis.RedisCache",
             "LOCATION": redis_url,
             "TIMEOUT": 3600,
+            "OPTIONS": {
+                "socket_connect_timeout": 1,
+                "socket_timeout": 1,
+            },
         }
     }
 else:

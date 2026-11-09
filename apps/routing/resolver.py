@@ -150,7 +150,10 @@ class USLocationResolver:
 
         # 4. Check cache
         cache_key = f"geo:v1:{hashlib.md5(lower_q.encode('utf-8')).hexdigest()}"
-        cached_val = cache.get(cache_key)
+        try:
+            cached_val = cache.get(cache_key)
+        except Exception:
+            cached_val = None
         if cached_val:
             return ResolvedLocation(**cached_val)
 
@@ -159,13 +162,19 @@ class USLocationResolver:
         gaz_res = self._lookup_gazetteer(norm_q)
         if gaz_res:
             self._validate_us_bounds(gaz_res.latitude, gaz_res.longitude, field_name, query_str)
-            cache.set(cache_key, asdict(gaz_res), timeout=86400 * 7)
+            try:
+                cache.set(cache_key, asdict(gaz_res), timeout=86400 * 7)
+            except Exception:
+                pass
             return gaz_res
 
         # 6. Fallback to external free US geocoders (<= 3 calls budget guard)
         ext_res = self._geocode_external(query_str, budget, field_name)
         self._validate_us_bounds(ext_res.latitude, ext_res.longitude, field_name, query_str)
-        cache.set(cache_key, asdict(ext_res), timeout=86400 * 30)
+        try:
+            cache.set(cache_key, asdict(ext_res), timeout=86400 * 30)
+        except Exception:
+            pass
         return ext_res
 
     def resolve_both(
