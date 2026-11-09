@@ -105,6 +105,11 @@ resource "google_project_service" "redis_api" {
   disable_on_destroy = false
 }
 
+resource "google_project_service" "monitoring_api" {
+  service            = "monitoring.googleapis.com"
+  disable_on_destroy = false
+}
+
 # 2. Artifact Registry Repository & Automated Image Build/Push (when var.image is omitted)
 resource "google_artifact_registry_repository" "repo" {
   count         = var.image == "" ? 1 : 0
@@ -121,7 +126,8 @@ locals {
 }
 
 resource "terraform_data" "build_and_push_image" {
-  count = var.image == "" ? 1 : 0
+  count            = var.image == "" ? 1 : 0
+  triggers_replace = [timestamp()]
   depends_on = [
     google_artifact_registry_repository.repo
   ]
@@ -250,6 +256,10 @@ resource "google_cloud_run_v2_service" "app" {
         name  = "REDIS_URL"
         value = local.effective_redis_url
       }
+      env {
+        name  = "DEPLOY_REVISION_ID"
+        value = var.image == "" ? terraform_data.build_and_push_image[0].id : var.image
+      }
       dynamic "volume_mounts" {
         for_each = var.provision_postgres ? [1] : []
         content {
@@ -289,6 +299,29 @@ resource "google_cloud_run_service_iam_member" "public_access" {
   service  = google_cloud_run_v2_service.app.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# 6. Native Google Cloud Monitoring Global HTTPS Uptime Check (SRE)
+resource "google_monitoring_uptime_check_config" "health_check" {
+  display_name = "fuel-route-optimizer-sre-uptime"
+  timeout      = "10s"
+  period       = "60s"
+  depends_on   = [google_project_service.monitoring_api]
+
+  http_check {
+    path         = "/api/v1/health/"
+    port         = "443"
+    use_ssl      = true
+    validate_ssl = true
+  }
+
+  monitored_resource {
+    type = "uptime_url"
+    labels = {
+      project_id = var.project_id
+      host       = replace(google_cloud_run_v2_service.app.uri, "https://", "")
+    }
+  }
 }
 
 output "url" {

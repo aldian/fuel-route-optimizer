@@ -1,6 +1,7 @@
 """Central route optimization service orchestrating resolution, routing, spatial search, and solver."""
 from dataclasses import dataclass
 import hashlib
+import json
 import time
 from typing import Any
 from django.core.cache import cache
@@ -87,17 +88,18 @@ class RouteOptimizationService:
             except Exception:
                 pass
 
-        # 4. Spatial Corridor Query & Candidate Projection
+        # 4. Spatial Corridor Query & Candidate Projection (Internal CPU Compute)
+        t_compute = time.perf_counter()
         candidates = self.projector.project_candidates(
             route_result.coordinates, route_result.distance_miles, vehicle_spec
         )
 
-        # 5. Exact Minimum-Cost Refueling Solver
+        # 5. Exact Minimum-Cost Refueling Solver (Internal CPU Compute)
         fuel_plan = self.solver.solve(
             route_result.distance_miles, candidates, vehicle_spec
         )
+        compute_elapsed_ms = (time.perf_counter() - t_compute) * 1000.0
 
-        compute_elapsed_ms = (time.perf_counter() - t0) * 1000.0
         opt_result = OptimizationResult(
             plan=fuel_plan,
             route=route_result,

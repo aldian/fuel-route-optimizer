@@ -417,6 +417,19 @@ def test_sre_rest_views_and_check_sla_command(client: object) -> None:
         assert resp_prom.status_code == 200
         assert "spotter_sla_compliant 1" in resp_prom.content.decode("utf-8")
 
+        # 2B. GET /api/v1/sre/dashboard/ & POST /api/v1/sre/probe/
+        resp_dash = client.get("/api/v1/sre/dashboard/")
+        assert resp_dash.status_code == 200
+        assert "SRE &amp; SLO Observability Console" in resp_dash.content.decode("utf-8")
+
+        resp_probe = client.post("/api/v1/sre/probe/")
+        assert resp_probe.status_code == 200
+        probe_data = resp_probe.json()
+        assert probe_data["drill_executed"] is True
+        assert probe_data["corridors_tested"] == 4
+        assert probe_data["requests_generated"] == 12
+        assert probe_data["sla_report"]["sla_compliant"] is True
+
         # 3. CLI check_sla with synthetic probe, --json, and --prometheus
         out_table = io.StringIO()
         with patch("apps.stations.models.FuelStation.objects.filter") as mock_filter:

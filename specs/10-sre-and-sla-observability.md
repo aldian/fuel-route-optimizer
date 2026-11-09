@@ -11,10 +11,13 @@ To allow operators, evaluators, and CI/CD pipelines to verify at any moment whet
 It provides:
 1. **Real-Time SLI (Service Level Indicator) Telemetry**: Thread-safe, sub-microsecond ring-buffer and counter telemetry capturing internal `cKDTree` + DP compute latency, end-to-end cached/uncached latency percentiles (`P50`, `P95`, `P99`), external API call counts, cache hit ratio, and HTTP error rates.
 2. **Automated SLO (Service Level Objective) & Error Budget Evaluation**: Evaluates live traffic and synthetic probes against the **6 Authoritative SLAs**, calculating remaining **Error Budget ($99.9\%$ Availability SLO)**.
-3. **REST SLA Report & Prometheus Metrics Endpoints**:
-   - `GET /api/v1/sre/sla/`: Real-time JSON SLA compliance scorecard.
+3. **REST SLA Report, Interactive SRE Console, Synthetic Probe & Prometheus Metrics Endpoints**:
+   - `GET /api/v1/sre/sla/`: Real-time JSON SLA compliance scorecard (aggregated across workers via shared Redis cache when configured).
    - `GET /api/v1/sre/metrics/`: Prometheus / OpenMetrics text exposition for Grafana dashboards and Alertmanager rules.
-4. **One-Command CLI SLA Auditor (`./bin/spotter-sre` / `python manage.py check_sla`)**: Runs active synthetic probes + live telemetry checks to verify all 6 SLAs from the terminal or CI/CD, with optional `--auto-rollback` integration if an SLA is breached.
+   - `GET /api/v1/sre/dashboard/`: Self-contained interactive SRE & SLO Observability Console with real-time Error Budget burn bar, P50/P95/P99 latency gauges, Redis cache hit ratio, and one-click live US corridor load/cache drill.
+   - `POST /api/v1/sre/probe/`: Executes an active synthetic multi-corridor US optimization & cache drill to verify all 6 SLOs under live load.
+4. **One-Command CLI SLA Auditor (`./bin/spotter-sre` / `python manage.py check_sla`)**: Runs active synthetic probes + live telemetry checks to verify all 6 SLAs from the terminal or CI/CD, with optional `--remote-url` and `--auto-rollback` integration if an SLA is breached.
+5. **Cloud-Native Uptime Monitoring**: Provisions a global HTTPS Uptime Check (`google_monitoring_uptime_check_config`) on Google Cloud Monitoring when deployed to GCP Cloud Run via Terraform.
 
 ```mermaid
 flowchart TD
