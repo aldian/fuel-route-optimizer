@@ -1,6 +1,7 @@
 """SRE SLA/SLO Compliance Scorecard and Prometheus Metrics REST API views."""
 from typing import Any
 from django.http import HttpResponse
+from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.request import Request
@@ -50,7 +51,7 @@ class SREPrometheusMetricsView(APIView):
     @extend_schema(
         summary="Prometheus / OpenMetrics SRE Telemetry Exporter",
         description="Exposes SLIs, SLO compliance gauge, latency percentiles, and error budget metrics in Prometheus text format.",
-        responses={200: serializers.CharField()},
+        responses={(200, "text/plain"): OpenApiTypes.STR},
     )
     def get(self, request: Request) -> HttpResponse:
         metrics_text = sre_monitor.render_prometheus_metrics()

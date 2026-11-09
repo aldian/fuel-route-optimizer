@@ -351,3 +351,43 @@ def test_destroy_deployment_missing_cli_tool_and_error_handling() -> None:
     ):
         with pytest.raises(CommandError, match="Infrastructure teardown command failed"):
             call_command("destroy_deployment", target="docker-vps", keep_local_artifacts=True, yes=True)
+
+
+def test_bin_spotter_scripts_executable_and_cli_execution() -> None:
+    import subprocess
+
+    bin_dir = settings.BASE_DIR / "bin"
+    expected_scripts = [
+        "spotter-deploy",
+        "spotter-destroy",
+        "spotter-sre",
+        "spotter-feature-flag",
+        "spotter-check-migrations",
+        "spotter-rollback",
+    ]
+    for script_name in expected_scripts:
+        script_path = bin_dir / script_name
+        assert script_path.exists(), f"Missing CLI wrapper: {script_path}"
+        assert os.access(script_path, os.X_OK), f"CLI wrapper is not executable (chmod +x required): {script_path}"
+
+    # Execute ./bin/spotter-deploy directly as an OS subprocess
+    deploy_bin = str(bin_dir / "spotter-deploy")
+    proc = subprocess.run(
+        [
+            deploy_bin,
+            "--target",
+            "docker-vps",
+            "--domain",
+            "api.cli-test.example.com",
+            "--non-interactive",
+            "--dry-run",
+        ],
+        cwd=str(settings.BASE_DIR),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert proc.returncode == 0, f"spotter-deploy failed: {proc.stderr}"
+    assert "[DRY RUN] Generated .env.production Preview:" in proc.stdout
+    assert "api.cli-test.example.com" in proc.stdout
+
