@@ -64,6 +64,19 @@ variable "database_url" {
   description = "Explicit DATABASE_URL when connecting to an external database"
 }
 
+variable "provision_redis" {
+  type        = bool
+  default     = false
+  description = "When true, provisions a managed Google Cloud Memorystore for Redis 7 instance from scratch"
+}
+
+variable "redis_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Explicit REDIS_URL when connecting to an external Redis cache"
+}
+
 provider "google" {
   project = var.project_id
   region  = var.region
@@ -98,10 +111,24 @@ resource "google_sql_user" "app_user" {
   password = var.db_password
 }
 
+# Optional: Provision Managed Google Cloud Memorystore for Redis 7 from scratch
+resource "google_redis_instance" "cache" {
+  count          = var.provision_redis ? 1 : 0
+  name           = "fuel-route-optimizer-redis"
+  tier           = "BASIC"
+  memory_size_gb = 1
+  region         = var.region
+  redis_version  = "REDIS_7_0"
+}
+
 locals {
   effective_database_url = var.provision_postgres ? (
     "postgres://spotter:${var.db_password}@/spotter_fuel?host=/cloudsql/${google_sql_database_instance.postgres[0].connection_name}"
   ) : var.database_url
+
+  effective_redis_url = var.provision_redis ? (
+    "redis://${google_redis_instance.cache[0].host}:${google_redis_instance.cache[0].port}/0"
+  ) : var.redis_url
 }
 
 # Cloud Run v2 Service (Scale-to-Zero enabled by default for demo cost savings)
@@ -148,6 +175,10 @@ resource "google_cloud_run_v2_service" "app" {
       env {
         name  = "DATABASE_URL"
         value = local.effective_database_url
+      }
+      env {
+        name  = "REDIS_URL"
+        value = local.effective_redis_url
       }
       dynamic "volume_mounts" {
         for_each = var.provision_postgres ? [1] : []
@@ -196,4 +227,9 @@ output "url" {
 output "cloud_sql_connection_name" {
   value       = var.provision_postgres ? google_sql_database_instance.postgres[0].connection_name : "none (SQLite WAL or external DB)"
   description = "Cloud SQL connection name if provisioned from scratch"
+}
+
+output "memorystore_redis_host" {
+  value       = var.provision_redis ? "${google_redis_instance.cache[0].host}:${google_redis_instance.cache[0].port}" : "none (local memory cache or external Redis)"
+  description = "Cloud Memorystore for Redis endpoint if provisioned from scratch"
 }

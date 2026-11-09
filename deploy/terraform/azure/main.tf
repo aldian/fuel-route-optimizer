@@ -63,6 +63,19 @@ variable "database_url" {
   description = "Explicit DATABASE_URL when connecting to an external database"
 }
 
+variable "provision_redis" {
+  type        = bool
+  default     = false
+  description = "When true, provisions an Azure Cache for Redis instance from scratch"
+}
+
+variable "redis_url" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Explicit REDIS_URL when connecting to an external Redis cache"
+}
+
 resource "azurerm_resource_group" "rg" {
   name     = var.resource_group_name
   location = var.location
@@ -89,10 +102,26 @@ resource "azurerm_postgresql_flexible_server_database" "app_db" {
   charset   = "utf8"
 }
 
+# Optional: Provision Managed Azure Cache for Redis from scratch
+resource "azurerm_redis_cache" "cache" {
+  count               = var.provision_redis ? 1 : 0
+  name                = "fuel-route-optimizer-redis"
+  location            = azurerm_resource_group.rg.location
+  resource_group_name = azurerm_resource_group.rg.name
+  capacity            = 0
+  family              = "C"
+  sku_name            = "Basic"
+  minimum_tls_version = "1.2"
+}
+
 locals {
   effective_database_url = var.provision_postgres ? (
     "postgres://spotter:${var.db_password}@${azurerm_postgresql_flexible_server.postgres[0].fqdn}:5432/spotter_fuel?sslmode=require"
   ) : var.database_url
+
+  effective_redis_url = var.provision_redis ? (
+    "rediss://:${azurerm_redis_cache.cache[0].primary_access_key}@${azurerm_redis_cache.cache[0].hostname}:${azurerm_redis_cache.cache[0].ssl_port}/0"
+  ) : var.redis_url
 }
 
 resource "azurerm_container_app_environment" "env" {
@@ -132,6 +161,10 @@ resource "azurerm_container_app" "app" {
       env {
         name  = "DATABASE_URL"
         value = local.effective_database_url
+      }
+      env {
+        name  = "REDIS_URL"
+        value = local.effective_redis_url
       }
     }
   }

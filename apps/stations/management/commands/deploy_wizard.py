@@ -78,9 +78,17 @@ class Command(BaseCommand):
             ),
         )
         parser.add_argument(
+            "--provision-redis",
+            action="store_true",
+            help=(
+                "Provision a new Managed Redis 7 cache from scratch on the selected target "
+                "(Memorystore on GCP, ElastiCache on AWS, Azure Cache for Redis on Azure, or Redis container on Docker)."
+            ),
+        )
+        parser.add_argument(
             "--redis-url",
             type=str,
-            help="Redis cache URL (e.g. redis://host:6379/0).",
+            help="Redis cache URL (e.g. redis://host:6379/0), or 'create' to provision Redis 7 from scratch.",
         )
         parser.add_argument(
             "--gcp-project-id",
@@ -300,10 +308,49 @@ class Command(BaseCommand):
                     self.style.SUCCESS("  ✓ Configured new PostgreSQL 16 instance with auto-generated credentials.")
                 )
 
+        provision_redis = bool(options.get("provision_redis") or cfg.get("provision_redis", False))
         redis_url = options.get("redis_url") or cfg.get("redis_url", "")
-        if not redis_url and not non_interactive:
-            ans = input("Redis REDIS_URL (leave blank for local memory cache): ").strip()
-            redis_url = ans
+        if not redis_url and not provision_redis and not non_interactive:
+            ans = input(
+                f"Redis REDIS_URL (type 'create' to provision Redis 7 from scratch on {target.upper()}, "
+                "or leave blank for local memory cache): "
+            ).strip()
+            if ans.lower() in ("create", "new", "provision"):
+                provision_redis = True
+            else:
+                redis_url = ans
+
+        if redis_url.lower() in ("create", "new", "provision"):
+            provision_redis = True
+            redis_url = ""
+
+        if provision_redis:
+            if target == "gcp":
+                redis_url = "redis://fuel-route-optimizer-redis:6379/0"
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Google Cloud Memorystore for Redis 7 (fuel-route-optimizer-redis) from scratch."
+                    )
+                )
+            elif target == "aws":
+                redis_url = "redis://fuel-optimizer-redis:6379/0"
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Amazon ElastiCache for Redis 7 (fuel-optimizer-redis) from scratch."
+                    )
+                )
+            elif target == "azure":
+                redis_url = "rediss://fuel-route-optimizer-redis.redis.cache.windows.net:6380/0"
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Azure Cache for Redis (fuel-route-optimizer-redis) from scratch."
+                    )
+                )
+            else:
+                redis_url = "redis://redis:6379/0"
+                self.stdout.write(
+                    self.style.SUCCESS("  ✓ Configured Redis 7 service (redis://redis:6379/0).")
+                )
 
         # 6. Kubernetes Provider Prompt
         k8s_provider = cfg.get("k8s_provider", "gcp-gke")
@@ -377,11 +424,11 @@ class Command(BaseCommand):
             if db_password:
                 redacted_env = redacted_env.replace(db_password, "********[REDACTED_DB_PASS]")
             self.stdout.write(redacted_env)
-            if provision_db and target in ("gcp", "aws", "azure"):
+            if (provision_db or provision_redis) and target in ("gcp", "aws", "azure"):
                 self.stdout.write(
                     self.style.SUCCESS(
                         f"\n[DRY RUN] Would generate deploy/terraform/{target}/terraform.tfvars "
-                        f"with provision_postgres = true."
+                        f"with provision_postgres = {str(provision_db).lower()}, provision_redis = {str(provision_redis).lower()}."
                     )
                 )
             if dns_provider != "none" and domain not in ("localhost", "127.0.0.1", "auto"):
@@ -391,10 +438,13 @@ class Command(BaseCommand):
                         f"\n[DRY RUN] Would update {dns_provider.upper()} A-records: {domain}, {staging_domain} -> {tip}"
                     )
                 )
-            self._print_dns_guide(domain, staging_domain, target, provision_db=provision_db)
+            self._print_dns_guide(
+                domain, staging_domain, target, provision_db=provision_db, provision_redis=provision_redis
+            )
             self.stdout.write(
                 self.style.SUCCESS(
-                    f"\n[DRY RUN] Target selected: {target} (K8s: {k8s_provider}, Provision DB: {provision_db}). Dry run complete."
+                    f"\n[DRY RUN] Target selected: {target} "
+                    f"(K8s: {k8s_provider}, Provision DB: {provision_db}, Provision Redis: {provision_redis}). Dry run complete."
                 )
             )
             return
@@ -418,6 +468,8 @@ class Command(BaseCommand):
                 provision_db=provision_db,
                 db_password=db_password,
                 database_url=database_url,
+                provision_redis=provision_redis,
+                redis_url=redis_url,
             )
             with open(tfvars_path, "w", encoding="utf-8") as f:
                 f.write(tfvars_content)
@@ -442,6 +494,7 @@ class Command(BaseCommand):
             "domain": domain,
             "staging_domain": staging_domain,
             "provision_db": provision_db,
+            "provision_redis": provision_redis,
             "dns_provider": dns_provider,
             "dns_target_ip": dns_target_ip,
             "route53_zone_id": route53_zone_id,
@@ -489,7 +542,9 @@ class Command(BaseCommand):
         gaz_count = USPlaceGazetteer.objects.count()
         self.stdout.write(f"  * US Gazetteer Entries: {gaz_count}")
 
-        self._print_dns_guide(domain, staging_domain, target, provision_db=provision_db)
+        self._print_dns_guide(
+            domain, staging_domain, target, provision_db=provision_db, provision_redis=provision_redis
+        )
 
         deploy_cmd_hint = (
             f"terraform -chdir=deploy/terraform/{target} init && terraform -chdir=deploy/terraform/{target} apply"
@@ -522,7 +577,14 @@ class Command(BaseCommand):
             pass
         return ""
 
-    def _print_dns_guide(self, domain: str, staging_domain: str, target: str, provision_db: bool = False) -> None:
+    def _print_dns_guide(
+        self,
+        domain: str,
+        staging_domain: str,
+        target: str,
+        provision_db: bool = False,
+        provision_redis: bool = False,
+    ) -> None:
         self.stdout.write("\n" + "=" * 76)
         self.stdout.write(self.style.MIGRATE_HEADING("                  DNS & DOMAIN CONFIGURATION GUIDE"))
         self.stdout.write("=" * 76)
@@ -554,7 +616,9 @@ class Command(BaseCommand):
                 self.stdout.write("  curl -s https://api.ipify.org")
                 self.stdout.write("\nCaddy reverse proxy will automatically provision Let's Encrypt TLS certificates.")
         if provision_db:
-            self.stdout.write(f"\nManaged PostgreSQL 16 Provisioning: ENABLED (from scratch on {target.upper()})")
+            self.stdout.write(f"\nManaged PostgreSQL 16 Provisioning : ENABLED (from scratch on {target.upper()})")
+        if provision_redis:
+            self.stdout.write(f"Managed Redis 7 Cache Provisioning : ENABLED (from scratch on {target.upper()})")
         self.stdout.write("=" * 76 + "\n")
 
     def _render_terraform_tfvars(
@@ -567,6 +631,8 @@ class Command(BaseCommand):
         provision_db: bool,
         db_password: str,
         database_url: str,
+        provision_redis: bool = False,
+        redis_url: str = "",
     ) -> str:
         lines = [
             f"# Generated by manage.py deploy_wizard for target: {target}",
@@ -585,6 +651,8 @@ class Command(BaseCommand):
             f"provision_postgres = {'true' if provision_db else 'false'}",
             f'db_password        = "{db_password}"',
             f'database_url       = "{database_url if not provision_db else ""}"',
+            f"provision_redis    = {'true' if provision_redis else 'false'}",
+            f'redis_url          = "{redis_url if not provision_redis else ""}"',
             "",
         ])
         return "\n".join(lines)

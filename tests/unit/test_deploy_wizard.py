@@ -394,14 +394,14 @@ def test_bin_spotter_scripts_executable_and_cli_execution() -> None:
 
 @pytest.mark.django_db
 def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratch() -> None:
-    # 1. Interactive GCP Cloud Run with blank domain ('auto' -> .run.app), interactive Project ID, and 'create' PostgreSQL
+    # 1. Interactive GCP Cloud Run with blank domain ('auto' -> .run.app), interactive Project ID, and 'create' PostgreSQL + Redis
     inputs = [
         "3",                  # [3] gcp (Cloud Run + Cloud SQL + Terraform)
         "",                   # Leave domain blank -> uses GCP Cloud Run generated domain (*.a.run.app)
         "1",                  # Auto-generate DJANGO_SECRET_KEY
         "spotter-demo-proj",  # GCP Project ID prompt
         "create",             # Create PostgreSQL 16 from scratch on GCP Cloud SQL
-        "",                   # Redis URL blank
+        "create",             # Create Redis 7 from scratch on GCP Cloud Memorystore
     ]
     out = io.StringIO()
     with patch("builtins.input", side_effect=inputs):
@@ -409,6 +409,7 @@ def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratc
 
     output = out.getvalue()
     assert "Configured Terraform to create Cloud SQL for PostgreSQL 16" in output
+    assert "Configured Terraform to create Google Cloud Memorystore for Redis 7" in output
     assert "Using Cloud-Generated Public HTTPS Domain (GCP)" in output
     assert ".run.app,.a.run.app" in output
 
@@ -421,12 +422,14 @@ def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratc
     assert "ALLOWED_HOSTS=.run.app,.a.run.app,localhost,127.0.0.1" in env_text
     assert "PRIMARY_DOMAIN=auto" in env_text
     assert "/cloudsql/spotter-demo-proj:us-central1:fuel-route-optimizer-pg" in env_text
+    assert "REDIS_URL=redis://fuel-route-optimizer-redis:6379/0" in env_text
 
     tfvars_text = tfvars_path.read_text(encoding="utf-8")
     assert 'project_id         = "spotter-demo-proj"' in tfvars_text
     assert "provision_postgres = true" in tfvars_text
+    assert "provision_redis    = true" in tfvars_text
 
-    # 2. Verify AWS, Azure, and Docker-VPS live tfvars generation + --database-url create
+    # 2. Verify AWS, Azure, and Docker-VPS live tfvars generation + --database-url create & --redis-url create
     for target_name in ("aws", "azure", "docker-vps"):
         out_t = io.StringIO()
         call_command(
@@ -434,6 +437,7 @@ def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratc
             target=target_name,
             domain="auto",
             database_url="create",
+            redis_url="create",
             db_password="explicit-test-db-password-123456",
             non_interactive=True,
             stdout=out_t,
