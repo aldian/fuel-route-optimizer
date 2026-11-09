@@ -24,6 +24,7 @@ local_db/
 deploy/generated/
 *.tfvars
 .terraform/
+.terraform.lock.hcl
 *.tfstate
 *.tfstate.*
 

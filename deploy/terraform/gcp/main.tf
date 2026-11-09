@@ -21,8 +21,8 @@ variable "region" {
 
 variable "image" {
   type        = string
-  default     = "ghcr.io/aldian/fuel-route-optimizer:latest"
-  description = "Container image URL"
+  default     = ""
+  description = "Explicit container image URL in Artifact Registry or GCR (if empty, builds and pushes local Dockerfile to Artifact Registry)"
 }
 
 variable "min_instances" {
@@ -82,13 +82,68 @@ provider "google" {
   region  = var.region
 }
 
-# Optional: Provision Managed Cloud SQL for PostgreSQL 16 from scratch
+# 1. Enable required Google Cloud APIs automatically
+resource "google_project_service" "run_api" {
+  service            = "run.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "artifactregistry_api" {
+  service            = "artifactregistry.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "sqladmin_api" {
+  count              = var.provision_postgres ? 1 : 0
+  service            = "sqladmin.googleapis.com"
+  disable_on_destroy = false
+}
+
+resource "google_project_service" "redis_api" {
+  count              = var.provision_redis ? 1 : 0
+  service            = "redis.googleapis.com"
+  disable_on_destroy = false
+}
+
+# 2. Artifact Registry Repository & Automated Image Build/Push (when var.image is omitted)
+resource "google_artifact_registry_repository" "repo" {
+  count         = var.image == "" ? 1 : 0
+  location      = var.region
+  repository_id = "fuel-route-optimizer"
+  description   = "Spotter US Fuel Route Optimizer container repository"
+  format        = "DOCKER"
+  depends_on    = [google_project_service.artifactregistry_api]
+}
+
+locals {
+  ar_image_uri        = "${var.region}-docker.pkg.dev/${var.project_id}/fuel-route-optimizer/app:latest"
+  effective_image_uri = var.image != "" ? var.image : local.ar_image_uri
+}
+
+resource "terraform_data" "build_and_push_image" {
+  count = var.image == "" ? 1 : 0
+  depends_on = [
+    google_artifact_registry_repository.repo
+  ]
+
+  provisioner "local-exec" {
+    working_dir = "${path.module}/../../.."
+    command     = <<-EOT
+      gcloud auth configure-docker ${var.region}-docker.pkg.dev --quiet
+      docker build -t ${local.ar_image_uri} .
+      docker push ${local.ar_image_uri}
+    EOT
+  }
+}
+
+# 3. Optional: Provision Managed Cloud SQL for PostgreSQL 16 from scratch
 resource "google_sql_database_instance" "postgres" {
   count               = var.provision_postgres ? 1 : 0
   name                = "fuel-route-optimizer-pg"
   database_version    = "POSTGRES_16"
   region              = var.region
   deletion_protection = false # Disabled so ./bin/spotter-destroy can tear down cleanly after demo
+  depends_on          = [google_project_service.sqladmin_api]
 
   settings {
     tier              = "db-f1-micro"
@@ -111,7 +166,7 @@ resource "google_sql_user" "app_user" {
   password = var.db_password
 }
 
-# Optional: Provision Managed Google Cloud Memorystore for Redis 7 from scratch
+# 4. Optional: Provision Managed Google Cloud Memorystore for Redis 7 from scratch
 resource "google_redis_instance" "cache" {
   count          = var.provision_redis ? 1 : 0
   name           = "fuel-route-optimizer-redis"
@@ -119,6 +174,7 @@ resource "google_redis_instance" "cache" {
   memory_size_gb = 1
   region         = var.region
   redis_version  = "REDIS_7_0"
+  depends_on     = [google_project_service.redis_api]
 }
 
 locals {
@@ -131,12 +187,15 @@ locals {
   ) : var.redis_url
 }
 
-# Cloud Run v2 Service (Scale-to-Zero enabled by default for demo cost savings)
+# 5. Cloud Run v2 Service (Scale-to-Zero enabled by default for demo cost savings)
 resource "google_cloud_run_v2_service" "app" {
-  name                = "fuel-route-optimizer"
-  location            = var.region
-  ingress             = "INGRESS_TRAFFIC_ALL"
-  deletion_protection = false
+  name     = "fuel-route-optimizer"
+  location = var.region
+  ingress  = "INGRESS_TRAFFIC_ALL"
+  depends_on = [
+    google_project_service.run_api,
+    terraform_data.build_and_push_image,
+  ]
 
   template {
     dynamic "volumes" {
@@ -150,7 +209,7 @@ resource "google_cloud_run_v2_service" "app" {
     }
 
     containers {
-      image = var.image
+      image = local.effective_image_uri
       resources {
         limits = {
           cpu    = "1000m"
