@@ -1,0 +1,47 @@
+name: CD Azure Container Apps (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      azure_location:
+        description: "Azure Region"
+        required: false
+        default: "eastus"
+
+jobs:
+  deploy-azure:
+    name: Deploy to Azure via Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Terraform Init & Validate
+        working-directory: deploy/terraform/azure
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Terraform Apply (Azure Container Apps + Optional Postgres & Redis)
+        if: env.ARM_CLIENT_ID != ''
+        working-directory: deploy/terraform/azure
+        env:
+          ARM_CLIENT_ID: ${{ secrets.ARM_CLIENT_ID }}
+          ARM_CLIENT_SECRET: ${{ secrets.ARM_CLIENT_SECRET }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+          ARM_TENANT_ID: ${{ secrets.ARM_TENANT_ID }}
+          TF_VAR_location: ${{ github.event.inputs.azure_location || 'eastus' }}
+          TF_VAR_django_secret_key: ${{ secrets.DJANGO_SECRET_KEY }}
+          TF_VAR_allowed_hosts: ${{ secrets.ALLOWED_HOSTS || '.azurecontainerapps.io,localhost,127.0.0.1' }}
+          TF_VAR_provision_postgres: ${{ secrets.PROVISION_POSTGRES || 'false' }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_database_url: ${{ secrets.DATABASE_URL }}
+          TF_VAR_provision_redis: ${{ secrets.PROVISION_REDIS || 'false' }}
+          TF_VAR_redis_url: ${{ secrets.REDIS_URL }}
+        run: |
+          terraform apply -auto-approve

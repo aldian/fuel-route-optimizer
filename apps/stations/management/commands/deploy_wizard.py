@@ -416,6 +416,10 @@ class Command(BaseCommand):
             redis_url=redis_url,
             domain=domain,
             staging_domain=staging_domain,
+            gcp_project_id=gcp_project_id,
+            db_password=db_password,
+            provision_db=provision_db,
+            provision_redis=provision_redis,
         )
 
         if dry_run:
@@ -551,10 +555,22 @@ class Command(BaseCommand):
             if target in ("gcp", "aws", "azure")
             else "docker compose -f docker-compose.prod.yml up -d"
         )
+        workflow_map = {
+            "gcp": "cd-gcp.yml",
+            "aws": "cd-aws.yml",
+            "azure": "cd-azure.yml",
+            "k8s": "cd-k8s.yml",
+            "docker-vps": "cd-vps.yml",
+            "paas": "cd-paas.yml",
+        }
+        wf_name = workflow_map.get(target, "ci.yml")
         self.stdout.write(
             self.style.SUCCESS(
-                f"\nDeployment configuration for target '{target}' is ready! "
-                f"Run '{deploy_cmd_hint}' or push to Git for automated CI/CD.\n"
+                f"\nDeployment configuration for target '{target}' is ready!\n"
+                f"Note: Generated files (.env.production, terraform.tfvars) contain live secrets and are git-ignored (mode 0600) so secrets are never committed to Git.\n\n"
+                f"Next Steps — Choose how to deploy:\n"
+                f"  [Option A - Direct Local Deploy] : {deploy_cmd_hint}\n"
+                f"  [Option B - GitHub Actions CI/CD]: ./deploy/generated/set_github_secrets.sh && gh workflow run {wf_name}\n\n"
                 f"Tip: After your demonstration, run './bin/spotter-destroy' to tear down all resources and DNS records ($0/hr cost)."
             )
         )
@@ -727,6 +743,10 @@ EXTERNAL_READ_TIMEOUT_SEC=4.0
         redis_url: str,
         domain: str = "",
         staging_domain: str = "",
+        gcp_project_id: str = "",
+        db_password: str = "",
+        provision_db: bool = False,
+        provision_redis: bool = False,
     ) -> str:
         return f"""#!/usr/bin/env bash
 # Helper script to set GitHub Actions Secrets via gh CLI
@@ -737,6 +757,14 @@ set -e
 echo "Setting GitHub Actions Secrets..."
 gh secret set DJANGO_SECRET_KEY --body "{secret_key}"
 gh secret set ALLOWED_HOSTS --body "{allowed_hosts}"
+gh secret set PROVISION_POSTGRES --body "{'true' if provision_db else 'false'}"
+gh secret set PROVISION_REDIS --body "{'true' if provision_redis else 'false'}"
+if [ -n "{gcp_project_id}" ]; then
+  gh secret set GCP_PROJECT_ID --body "{gcp_project_id}"
+fi
+if [ -n "{db_password}" ]; then
+  gh secret set DB_PASSWORD --body "{db_password}"
+fi
 if [ -n "{domain}" ]; then
   gh secret set PRIMARY_DOMAIN --body "{domain}"
 fi

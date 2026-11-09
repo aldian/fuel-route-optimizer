@@ -1,0 +1,20 @@
+name: CD Managed PaaS (Fly.io / Render / Railway)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-paas:
+    name: Deploy to Managed PaaS
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to Fly.io (if FLY_API_TOKEN is configured)
+        if: env.FLY_API_TOKEN != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          curl -L https://fly.io/install.sh | sh
+          ~/.fly/bin/flyctl deploy --remote-only

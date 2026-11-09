@@ -1,0 +1,45 @@
+name: CD AWS App Runner (Terraform)
+
+on:
+  workflow_dispatch:
+    inputs:
+      aws_region:
+        description: "AWS Region"
+        required: false
+        default: "us-east-1"
+
+jobs:
+  deploy-aws:
+    name: Deploy to AWS via Terraform
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.8.5"
+
+      - name: Terraform Init & Validate
+        working-directory: deploy/terraform/aws
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+      - name: Terraform Apply (AWS App Runner + Optional RDS & ElastiCache)
+        if: env.AWS_ACCESS_KEY_ID != ''
+        working-directory: deploy/terraform/aws
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          TF_VAR_aws_region: ${{ github.event.inputs.aws_region || 'us-east-1' }}
+          TF_VAR_django_secret_key: ${{ secrets.DJANGO_SECRET_KEY }}
+          TF_VAR_allowed_hosts: ${{ secrets.ALLOWED_HOSTS || '.awsapprunner.com,.elb.amazonaws.com,localhost,127.0.0.1' }}
+          TF_VAR_provision_postgres: ${{ secrets.PROVISION_POSTGRES || 'false' }}
+          TF_VAR_db_password: ${{ secrets.DB_PASSWORD }}
+          TF_VAR_database_url: ${{ secrets.DATABASE_URL }}
+          TF_VAR_provision_redis: ${{ secrets.PROVISION_REDIS || 'false' }}
+          TF_VAR_redis_url: ${{ secrets.REDIS_URL }}
+        run: |
+          terraform apply -auto-approve

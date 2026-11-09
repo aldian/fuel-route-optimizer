@@ -1,0 +1,16 @@
+name: CD VPS Docker Compose + Caddy TLS
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy-vps:
+    name: Validate & Deploy Docker Compose Stack
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Validate Production Docker Compose Configuration
+        run: |
+          docker compose -f docker-compose.prod.yml config --quiet
