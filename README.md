@@ -12,6 +12,13 @@ A high-performance, cost-effective fuel route optimization REST API and interact
 
 Given any origin and destination within the USA, the API calculates the driving route, identifies all viable fuel stops along the highway corridor, computes the mathematically optimal refueling strategy to minimize total fuel spend, and produces an accessible visual map.
 
+> [!TIP]
+> **Live Cloud Run Production Deployment (Google Cloud Run + Cloud SQL PostgreSQL 16 + Cloud Memorystore Redis 7)**
+> - **Interactive Swagger UI (OpenAPI 3.0)**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/docs/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/docs/)
+> - **Coast-to-Coast Route Map (`New York, NY` $\to$ `Los Angeles, CA`)**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/route/map/?start=New+York,+NY&finish=Los+Angeles,+CA`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/route/map/?start=New+York,+NY&finish=Los+Angeles,+CA)
+> - **Interactive SRE & 6-SLO Observability Console**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/sre/dashboard/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/sre/dashboard/)
+> - **System Health & Spatial Index Readiness**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/health/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/health/)
+
 > [!IMPORTANT]
 > **Developed with Spec-Driven Development (SDD) — [`specs/`](specs/README.md) is the Single Source of Truth**
 >
@@ -366,8 +373,11 @@ Verify at any moment whether the system meets all **6 Authoritative SLAs** (`>= 
 ./bin/spotter-sre --remote-url https://api.fuel-optimizer.example.com --auto-rollback --rollback-target k8s
 ```
 
+- **Interactive SRE & SLO Observability Console**: `GET /api/v1/sre/dashboard/` (live web dashboard with Error Budget gauge, `P50`/`P95`/`P99` latency telemetry aggregated across Cloud Run workers via Cloud Memorystore Redis, 6-SLO scorecard, and 1-click Live Multi-Corridor Drill).
+- **Live Multi-Corridor Synthetic Drill**: `POST /api/v1/sre/probe/` (executes 12 optimization and cache probes across 4 US Interstate freight corridors: `I-95`, `I-35`, `I-80`, `I-5`).
 - **REST SLA Compliance Endpoint**: `GET /api/v1/sre/sla/` (returns JSON scorecard, percentile latencies `p50`/`p95`/`p99`, and remaining Error Budget).
 - **Prometheus / OpenMetrics Exporter**: `GET /api/v1/sre/metrics/` (exposes `spotter_sla_compliant`, `spotter_compute_latency_ms_p99`, `spotter_error_budget_remaining_pct`, etc. for Grafana & Alertmanager).
+- **Google Cloud Monitoring Uptime Check**: Provisioned automatically via Terraform (`google_monitoring_uptime_check_config.health_check` in [`deploy/terraform/gcp/main.tf`](deploy/terraform/gcp/main.tf)) to probe `/api/v1/health/` every 60 seconds from global GCP POPs.
 
 ---
 
@@ -392,7 +402,7 @@ When contributing to this project:
 | [`specs/07-cicd-and-production-deployment-cli.md`](specs/07-cicd-and-production-deployment-cli.md) | Multi-target CI/CD pipelines (AWS, GCP, Azure, K8s, Docker/Caddy, PaaS), Terraform IaC, automated Route 53 & Namecheap DNS provisioning, and `deploy_wizard` CLI. |
 | [`specs/08-feature-flags-and-zero-downtime-database-migrations.md`](specs/08-feature-flags-and-zero-downtime-database-migrations.md) | Dynamic feature flags (`< 0.05 ms`), Expand-Contract zero-downtime database migration rules (`RULE-MIG-01`..`06`), and Canary / Blue-Green / 1-click rollbacks. |
 | [`specs/09-developer-rules-and-system-integrity.md`](specs/09-developer-rules-and-system-integrity.md) | The 6 non-negotiable automated quality gates and contributor rules of engagement. |
-| [`specs/10-sre-and-sla-observability.md`](specs/10-sre-and-sla-observability.md) | SRE telemetry engine (`apps/common/sre.py`), 6-SLO & Error Budget evaluation, `/api/v1/sre/sla/` & Prometheus `/api/v1/sre/metrics/` endpoints, and `./bin/spotter-sre` CLI auditor. |
+| [`specs/10-sre-and-sla-observability.md`](specs/10-sre-and-sla-observability.md) | SRE telemetry engine (`apps/common/sre.py`), Redis cluster aggregation, 6-SLO & Error Budget evaluation, `/api/v1/sre/dashboard/`, `/api/v1/sre/probe/`, `/api/v1/sre/sla/`, Prometheus `/api/v1/sre/metrics/`, GCP Uptime Checks, and `./bin/spotter-sre` CLI auditor. |
 
 ---
 
