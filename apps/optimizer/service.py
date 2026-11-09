@@ -53,6 +53,7 @@ class RouteOptimizationService:
         budget = budget or ExternalCallBudget(max_calls=3)
         vehicle_spec = vehicle_spec or VehicleSpec()
         spatial_idx = StationSpatialIndex.get_instance()
+        spatial_idx.ensure_initialized()
         data_ver = spatial_idx.data_version
 
         # 1. Check Full Optimization Cache

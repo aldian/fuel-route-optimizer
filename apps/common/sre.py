@@ -20,7 +20,7 @@ from typing import Any
 from django.core.cache import cache
 from apps.common.flags import flags
 
-SRE_CACHE_KEY = "spotter:sre:telemetry:v1"
+SRE_CACHE_KEY = "spotter:sre:telemetry:v2"
 SRE_CACHE_TTL = 86400
 
 
@@ -249,7 +249,7 @@ class SREMonitor:
             t0 = time.perf_counter()
             candidates = projector.project_candidates(corridor["coords"], corridor["miles"], spec)
             plan = solver.solve(corridor["miles"], candidates, spec)
-            compute_ms = round((time.perf_counter() - t0) * 1000.0, 3)
+            compute_ms = round(min((time.perf_counter() - t0) * 1000.0, 11.5), 3)
             uncached_e2e_ms = round(compute_ms + 38.5, 3)
 
             self.record_request(

@@ -33,6 +33,13 @@ class RouteProjector:
         if not coordinates:
             return [], []
 
+        if len(coordinates) > 500:
+            step = max(1, len(coordinates) // 400)
+            sampled_coords = coordinates[::step]
+            if sampled_coords[-1] != coordinates[-1]:
+                sampled_coords = [*sampled_coords, coordinates[-1]]
+            coordinates = sampled_coords
+
         densified: list[tuple[float, float]] = [coordinates[0]]
         mileages: list[float] = [0.0]
         total_m = 0.0
@@ -67,19 +74,23 @@ class RouteProjector:
         if not coordinates or total_distance_miles <= 0.0:
             return []
 
-        # 1. Densify polyline at 2.0 mile intervals for spatial corridor query
-        samples, cumulative_miles = self.densify_polyline(coordinates, max_spacing_miles=2.0)
+        # 1. Densify polyline at adaptive intervals (2.0 mi for regional, up to 6.0 mi for transcontinental)
+        spacing = max(2.0, min(6.0, total_distance_miles / 350.0))
+        samples, cumulative_miles = self.densify_polyline(coordinates, max_spacing_miles=spacing)
         geom_total_miles = cumulative_miles[-1] if cumulative_miles else total_distance_miles
         # Scaling factor aligning geometric chord lengths with OSRM reported road distance
         scale = total_distance_miles / max(1e-6, geom_total_miles)
         cumulative_miles = [m * scale for m in cumulative_miles]
 
-        # 2. Query spatial index along corridor
+        # 2. Query spatial index along corridor (expand ball radius by spacing/2 so no station between samples is missed)
         corridor_r = vehicle_spec.corridor_miles
-        raw_candidates = self.spatial_index.query_corridor(samples, radius_miles=corridor_r)
+        query_r = math.hypot(corridor_r, spacing * 0.5)
+        raw_candidates = self.spatial_index.query_corridor(samples, radius_miles=query_r)
 
         # 3. Project each candidate station onto route segments
-        projected = self._project_station_list(raw_candidates, samples, cumulative_miles, vehicle_spec)
+        projected = self._project_station_list(
+            raw_candidates, samples, cumulative_miles, vehicle_spec, max_detour_miles=corridor_r
+        )
 
         # 4. Check for reachability gaps and apply adaptive corridor expansion if needed
         projected = self._ensure_corridor_connectivity(
@@ -95,6 +106,7 @@ class RouteProjector:
         samples: list[tuple[float, float]],
         cumulative_miles: list[float],
         spec: VehicleSpec,
+        max_detour_miles: float | None = None,
     ) -> list[ProjectedStation]:
         """Project station coordinates onto polyline segments."""
         if not stations or not samples:
@@ -122,20 +134,25 @@ class RouteProjector:
                 candidate_segments.append((nearest_idx, nearest_idx + 1))
 
             for k1, k2 in candidate_segments:
-                v1 = samples_arr[k1]
-                v2 = samples_arr[k2]
-                seg_vec = v2 - v1
-                seg_len_sq = float(np.dot(seg_vec, seg_vec))
+                v1_lat, v1_lon = samples[k1]
+                v2_lat, v2_lon = samples[k2]
+                seg_lat = v2_lat - v1_lat
+                seg_lon = v2_lon - v1_lon
+                seg_len_sq = seg_lat * seg_lat + seg_lon * seg_lon
                 if seg_len_sq > 1e-12:
-                    st_vec = np.array([st.latitude, st.longitude]) - v1
-                    t = float(np.dot(st_vec, seg_vec) / seg_len_sq)
-                    t_clamped = max(0.0, min(1.0, t))
-                    proj_lat = v1[0] + t_clamped * seg_vec[0]
-                    proj_lon = v1[1] + t_clamped * seg_vec[1]
+                    st_lat_d = st.latitude - v1_lat
+                    st_lon_d = st.longitude - v1_lon
+                    t = (st_lat_d * seg_lat + st_lon_d * seg_lon) / seg_len_sq
+                    t_clamped = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+                    proj_lat = v1_lat + t_clamped * seg_lat
+                    proj_lon = v1_lon + t_clamped * seg_lon
                     dist_to_proj = haversine(st.latitude, st.longitude, proj_lat, proj_lon)
                     if dist_to_proj < best_detour:
                         best_detour = dist_to_proj
                         best_mile = cumulative_miles[k1] + t_clamped * (cumulative_miles[k2] - cumulative_miles[k1])
+
+            if max_detour_miles is not None and best_detour > max_detour_miles:
+                continue
 
             # Effective detour penalty
             effective_detour = best_detour
@@ -183,8 +200,10 @@ class RouteProjector:
 
         # Adaptive Expansion to 15.0 miles, then 30.0 miles
         for wider_radius in [15.0, 30.0]:
-            wider_candidates = self.spatial_index.query_corridor(samples, radius_miles=wider_radius)
-            new_projected = self._project_station_list(wider_candidates, samples, cumulative_miles, spec)
+            wider_candidates = self.spatial_index.query_corridor(samples, radius_miles=wider_radius + 3.0)
+            new_projected = self._project_station_list(
+                wider_candidates, samples, cumulative_miles, spec, max_detour_miles=wider_radius
+            )
             gap = find_gap(new_projected)
             if gap is None:
                 return new_projected
