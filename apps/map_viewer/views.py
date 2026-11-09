@@ -77,6 +77,7 @@ class RouteMapView(View):
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>Fuel Route Optimizer | {origin.resolved_name} to {dest.resolved_name}</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
@@ -431,4 +432,6 @@ class RouteMapView(View):
   </script>
 </body>
 </html>"""
-        return HttpResponse(html, content_type="text/html")
+        response = HttpResponse(html, content_type="text/html")
+        response["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response

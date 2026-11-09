@@ -123,6 +123,7 @@ STORAGES = {
 }
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"
 
 # Cache Configuration: In-memory LRU or Redis via REDIS_URL
 redis_url = os.environ.get("REDIS_URL", "").strip()

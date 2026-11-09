@@ -231,6 +231,8 @@ flowchart LR
    - All visible UI headings, cards, tooltips, and controls use plain logistics terminology (*"Route Overview"*, *"Total Fuel Cost"*, *"Pump Spend Along Route"*, *"Optimal Fuel Stops"*, *"Price per Gallon"*, *"Mile Marker"*) — never exposing internal engineering terms or upstream infrastructure provider names in customer-facing UI text.
 4. **Zero Extra Upstream Calls**:
    - Opening `map_url` after calling `/api/v1/route/` hits the warm `TwoTierCache` immediately (`0` additional routing or geocoding requests, `< 10 ms` server render).
+5. **OpenStreetMap Tile Usage Policy & Referrer Compliance**:
+   - Both Django (`SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"`) and the HTML document (`<meta name="referrer" content="strict-origin-when-cross-origin">`) explicitly send the origin `Referer` header when fetching map tiles over HTTPS so OpenStreetMap (`tile.openstreetmap.org`) and CDN tile servers never block cross-origin tile requests with `403 Access blocked`.
 
 ---
 
