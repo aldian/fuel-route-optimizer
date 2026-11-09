@@ -17,11 +17,15 @@ coverage.xml
 *.db
 local_db/
 
-# Environment files
+# Environment & Terraform state files
 .env
 .env.*
 !.env.example
 deploy/generated/
+*.tfvars
+.terraform/
+*.tfstate
+*.tfstate.*
 
 # Static & Media files
 staticfiles/

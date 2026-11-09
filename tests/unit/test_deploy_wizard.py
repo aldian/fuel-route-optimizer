@@ -391,3 +391,64 @@ def test_bin_spotter_scripts_executable_and_cli_execution() -> None:
     assert "[DRY RUN] Generated .env.production Preview:" in proc.stdout
     assert "api.cli-test.example.com" in proc.stdout
 
+
+@pytest.mark.django_db
+def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratch() -> None:
+    # 1. Interactive GCP Cloud Run with blank domain ('auto' -> .run.app), interactive Project ID, and 'create' PostgreSQL
+    inputs = [
+        "3",                  # [3] gcp (Cloud Run + Cloud SQL + Terraform)
+        "",                   # Leave domain blank -> uses GCP Cloud Run generated domain (*.a.run.app)
+        "1",                  # Auto-generate DJANGO_SECRET_KEY
+        "spotter-demo-proj",  # GCP Project ID prompt
+        "create",             # Create PostgreSQL 16 from scratch on GCP Cloud SQL
+        "",                   # Redis URL blank
+    ]
+    out = io.StringIO()
+    with patch("builtins.input", side_effect=inputs):
+        call_command("deploy_wizard", stdout=out)
+
+    output = out.getvalue()
+    assert "Configured Terraform to create Cloud SQL for PostgreSQL 16" in output
+    assert "Using Cloud-Generated Public HTTPS Domain (GCP)" in output
+    assert ".run.app,.a.run.app" in output
+
+    env_path = settings.BASE_DIR / ".env.production"
+    tfvars_path = settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars"
+    assert env_path.exists()
+    assert tfvars_path.exists()
+
+    env_text = env_path.read_text(encoding="utf-8")
+    assert "ALLOWED_HOSTS=.run.app,.a.run.app,localhost,127.0.0.1" in env_text
+    assert "PRIMARY_DOMAIN=auto" in env_text
+    assert "/cloudsql/spotter-demo-proj:us-central1:fuel-route-optimizer-pg" in env_text
+
+    tfvars_text = tfvars_path.read_text(encoding="utf-8")
+    assert 'project_id         = "spotter-demo-proj"' in tfvars_text
+    assert "provision_postgres = true" in tfvars_text
+
+    # 2. Verify AWS, Azure, and Docker-VPS live tfvars generation + --database-url create
+    for target_name in ("aws", "azure", "docker-vps"):
+        out_t = io.StringIO()
+        call_command(
+            "deploy_wizard",
+            target=target_name,
+            domain="auto",
+            database_url="create",
+            db_password="explicit-test-db-password-123456",
+            non_interactive=True,
+            stdout=out_t,
+        )
+        assert "Deployment configuration for target" in out_t.getvalue()
+
+    # 3. Verify _detect_gcp_project_id fallback when gcloud is missing
+    from apps.stations.management.commands.deploy_wizard import Command as DeployWizardCommand
+    with patch("subprocess.run", side_effect=FileNotFoundError("no gcloud")):
+        assert DeployWizardCommand()._detect_gcp_project_id() == ""
+
+    # 4. Clean up via destroy_deployment (verifying all terraform.tfvars are also removed)
+    with patch("subprocess.run", return_value=MagicMock(stdout="Destroyed\n", returncode=0)):
+        call_command("destroy_deployment", yes=True, stdout=io.StringIO())
+    assert not env_path.exists()
+    assert not tfvars_path.exists()
+
+

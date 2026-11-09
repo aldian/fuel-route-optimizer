@@ -137,9 +137,10 @@ def test_deploy_wizard_interactive_and_production_write(tmp_path: Path) -> None:
     assert "DATABASE_URL=postgresql://user:pass@db:5432/app" in content
     assert "REDIS_URL=redis://redis:6379/0" in content
 
-    # Clean up generated test file
-    if env_path.exists():
-        env_path.unlink()
+    # Clean up generated test file and reset K8s overlays
+    from unittest.mock import MagicMock
+    with patch("subprocess.run", return_value=MagicMock(stdout="", returncode=0)):
+        call_command("destroy_deployment", yes=True, stdout=StringIO())
 
 
 @pytest.mark.django_db

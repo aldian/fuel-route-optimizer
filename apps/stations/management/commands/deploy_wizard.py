@@ -11,9 +11,22 @@ from django.core.management.base import BaseCommand
 from apps.stations.dns.manager import DNSManager
 
 
+CLOUD_DOMAIN_SUFFIXES: dict[str, str] = {
+    "gcp": ".run.app,.a.run.app",
+    "aws": ".awsapprunner.com,.elb.amazonaws.com",
+    "azure": ".azurecontainerapps.io",
+    "paas": ".fly.dev,.onrender.com,.up.railway.app",
+}
+
+
 def generate_secure_secret_key() -> str:
     """Generate a high-entropy 64-character URL-safe secret key."""
     return secrets.token_urlsafe(50)
+
+
+def generate_secure_db_password() -> str:
+    """Generate a high-entropy 32-character URL-safe database password."""
+    return secrets.token_urlsafe(24)
 
 
 class Command(BaseCommand):
@@ -28,7 +41,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--domain",
             type=str,
-            help="Primary public domain (e.g. api.example.com).",
+            help=(
+                "Primary public domain (e.g. api.example.com), or 'auto' to use the cloud provider's "
+                "generated domain (e.g. *.a.run.app on GCP Cloud Run)."
+            ),
         )
         parser.add_argument(
             "--staging-domain",
@@ -41,14 +57,35 @@ class Command(BaseCommand):
             help="Explicit DJANGO_SECRET_KEY (if omitted, auto-generated).",
         )
         parser.add_argument(
+            "--provision-db",
+            action="store_true",
+            help=(
+                "Provision a new PostgreSQL 16 database from scratch on the selected target "
+                "(Cloud SQL on GCP, RDS on AWS, Flexible Server on Azure, or Postgres container on Docker)."
+            ),
+        )
+        parser.add_argument(
+            "--db-password",
+            type=str,
+            help="Explicit password when provisioning a new PostgreSQL instance (auto-generated if omitted).",
+        )
+        parser.add_argument(
             "--database-url",
             type=str,
-            help="Database connection URL (e.g. postgres://user:pass@host:5432/dbname).",
+            help=(
+                "Database connection URL (e.g. postgres://user:pass@host:5432/dbname), "
+                "or 'create' to provision PostgreSQL from scratch."
+            ),
         )
         parser.add_argument(
             "--redis-url",
             type=str,
             help="Redis cache URL (e.g. redis://host:6379/0).",
+        )
+        parser.add_argument(
+            "--gcp-project-id",
+            type=str,
+            help="GCP Project ID (when target is gcp or k8s/gcp-gke).",
         )
         parser.add_argument(
             "--dns-provider",
@@ -103,7 +140,9 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        self.stdout.write(self.style.MIGRATE_HEADING("=== Spotter Fuel Route Optimizer: Zero-to-Production Deploy Wizard ==="))
+        self.stdout.write(
+            self.style.MIGRATE_HEADING("=== Spotter Fuel Route Optimizer: Zero-to-Production Deploy Wizard ===")
+        )
 
         cfg: dict[str, Any] = {}
         if options.get("config_json"):
@@ -141,23 +180,38 @@ class Command(BaseCommand):
 
         # 2. Domain & ALLOWED_HOSTS
         domain = options.get("domain") or cfg.get("domain")
+        cloud_suffix = CLOUD_DOMAIN_SUFFIXES.get(target, "")
         if not domain:
             if non_interactive:
-                domain = "localhost"
+                domain = "auto" if target in CLOUD_DOMAIN_SUFFIXES else "localhost"
+            elif target in CLOUD_DOMAIN_SUFFIXES:
+                ans = input(
+                    f"\nEnter public domain for API (leave blank or type 'auto' to use {target.upper()}-generated "
+                    f"domain [{cloud_suffix}]): "
+                ).strip()
+                domain = ans if ans else "auto"
             else:
                 ans = input("\nEnter public domain for API (e.g. api.fuel-optimizer.com) [default: localhost]: ").strip()
                 domain = ans if ans else "localhost"
 
         staging_domain = options.get("staging_domain") or cfg.get("staging_domain")
         if not staging_domain:
-            if non_interactive or domain == "localhost":
+            if domain == "auto":
+                staging_domain = "auto"
+            elif non_interactive or domain == "localhost":
                 staging_domain = f"staging-{domain}" if domain != "localhost" else "staging.localhost"
             else:
                 staging_default = f"staging-{domain}"
                 ans = input(f"Enter staging domain [default: {staging_default}]: ").strip()
                 staging_domain = ans if ans else staging_default
 
-        allowed_hosts = f"{domain},{staging_domain},127.0.0.1,localhost" if domain != "localhost" else "localhost,127.0.0.1"
+        if domain == "auto":
+            allowed_hosts = f"{cloud_suffix},localhost,127.0.0.1" if cloud_suffix else "localhost,127.0.0.1"
+        elif domain != "localhost":
+            extra = f",{cloud_suffix}" if cloud_suffix else ""
+            allowed_hosts = f"{domain},{staging_domain}{extra},127.0.0.1,localhost"
+        else:
+            allowed_hosts = "localhost,127.0.0.1"
 
         # 3. Secret Key
         secret_key = options.get("secret_key") or cfg.get("secret_key")
@@ -177,19 +231,81 @@ class Command(BaseCommand):
                     secret_key = generate_secure_secret_key()
                     self.stdout.write(self.style.SUCCESS("Generated high-entropy 64-char key."))
 
-        # 4. Database & Cache URLs
+        # 4. Cloud-Specific Region & Project ID
+        cloud_region = cfg.get(
+            "region",
+            "us-east-1" if target == "aws" else ("us-central1" if target == "gcp" else "eastus"),
+        )
+        gcp_project_id = options.get("gcp_project_id") or cfg.get("gcp_project_id") or ""
+        if not gcp_project_id:
+            default_proj = os.environ.get("GOOGLE_CLOUD_PROJECT") or self._detect_gcp_project_id() or "my-gcp-project"
+            if target == "gcp" and not non_interactive:
+                ans = input(f"\nGCP Project ID [default: {default_proj}]: ").strip()
+                gcp_project_id = ans if ans else default_proj
+            else:
+                gcp_project_id = default_proj
+
+        # 5. Database & Cache URLs (Supports provisioning PostgreSQL from scratch!)
+        provision_db = bool(options.get("provision_db") or cfg.get("provision_db", False))
+        db_password = options.get("db_password") or cfg.get("db_password") or ""
         database_url = options.get("database_url") or cfg.get("database_url", "")
-        if not database_url and not non_interactive:
-            ans = input("\nPostgreSQL DATABASE_URL (leave blank for local SQLite WAL): ").strip()
-            database_url = ans
+
+        if not database_url and not provision_db and not non_interactive:
+            ans = input(
+                "\nPostgreSQL DATABASE_URL (type 'create' to provision PostgreSQL 16 from scratch on "
+                f"{target.upper()}, or leave blank for embedded SQLite WAL): "
+            ).strip()
+            if ans.lower() in ("create", "new", "provision"):
+                provision_db = True
+            else:
+                database_url = ans
+
+        if database_url.lower() in ("create", "new", "provision"):
+            provision_db = True
+            database_url = ""
+
+        if provision_db:
+            if not db_password:
+                db_password = generate_secure_db_password()
+            if target == "gcp":
+                database_url = (
+                    f"postgres://spotter:{db_password}@/spotter_fuel"
+                    f"?host=/cloudsql/{gcp_project_id}:{cloud_region}:fuel-route-optimizer-pg"
+                )
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Cloud SQL for PostgreSQL 16 (fuel-route-optimizer-pg) from scratch."
+                    )
+                )
+            elif target == "aws":
+                database_url = f"postgres://spotter:{db_password}@fuel-route-optimizer-pg:5432/spotter_fuel"
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Amazon RDS PostgreSQL 16 (fuel-route-optimizer-pg) from scratch."
+                    )
+                )
+            elif target == "azure":
+                database_url = (
+                    f"postgres://spotter:{db_password}@fuel-route-optimizer-pg.postgres.database.azure.com:5432"
+                    f"/spotter_fuel?sslmode=require"
+                )
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        "  ✓ Configured Terraform to create Azure PostgreSQL Flexible Server 16 (fuel-route-optimizer-pg) from scratch."
+                    )
+                )
+            else:
+                database_url = f"postgres://spotter:{db_password}@db:5432/spotter_fuel"
+                self.stdout.write(
+                    self.style.SUCCESS("  ✓ Configured new PostgreSQL 16 instance with auto-generated credentials.")
+                )
 
         redis_url = options.get("redis_url") or cfg.get("redis_url", "")
         if not redis_url and not non_interactive:
             ans = input("Redis REDIS_URL (leave blank for local memory cache): ").strip()
             redis_url = ans
 
-        # 5. Cloud-Specific Prompts
-        cloud_region = cfg.get("region", "us-east-1" if target == "aws" else ("us-central1" if target == "gcp" else "eastus"))
+        # 6. Kubernetes Provider Prompt
         k8s_provider = cfg.get("k8s_provider", "gcp-gke")
         if target == "k8s" and not non_interactive:
             self.stdout.write("\nKubernetes Provider:")
@@ -201,7 +317,7 @@ class Command(BaseCommand):
             k8s_map = {"1": "gcp-gke", "2": "aws-eks", "3": "azure-aks", "4": "generic", "": "gcp-gke"}
             k8s_provider = k8s_map.get(ans, "gcp-gke")
 
-        # 6. Automated DNS Configuration
+        # 7. Automated DNS Configuration (Skipped if using cloud-generated domain 'auto')
         dns_provider = options.get("dns_provider") or cfg.get("dns_provider", "none")
         dns_target_ip = options.get("dns_target_ip") or cfg.get("dns_target_ip", "")
         route53_zone_id = options.get("route53_zone_id") or cfg.get("route53_zone_id", "")
@@ -210,13 +326,17 @@ class Command(BaseCommand):
         nc_client_ip = options.get("namecheap_client_ip") or cfg.get("namecheap_client_ip", "")
         nc_sandbox = bool(options.get("namecheap_sandbox") or cfg.get("namecheap_sandbox", False))
 
-        if not non_interactive and dns_provider == "none" and domain not in ("localhost", "127.0.0.1"):
+        if not non_interactive and dns_provider == "none" and domain not in ("localhost", "127.0.0.1", "auto"):
             self.stdout.write("\nAutomated DNS Record Provisioning:")
             self.stdout.write("  [1] none      : None / Manual DNS Record Setup (Default)")
             self.stdout.write("  [2] route53   : AWS Route 53 (Automated A-record creation via API)")
             self.stdout.write("  [3] namecheap : Namecheap DNS (Automated A-record creation via API)")
             ans = input("Select DNS provider [1-3, default: 1]: ").strip()
-            dns_map = {"1": "none", "none": "none", "": "none", "2": "route53", "route53": "route53", "3": "namecheap", "namecheap": "namecheap"}
+            dns_map = {
+                "1": "none", "none": "none", "": "none",
+                "2": "route53", "route53": "route53",
+                "3": "namecheap", "namecheap": "namecheap",
+            }
             dns_provider = dns_map.get(ans, "none")
 
             if dns_provider == "route53":
@@ -231,7 +351,7 @@ class Command(BaseCommand):
                 ip_ans = input(f"Target Public IP for A-records [default: {detected_ip}]: ").strip()
                 dns_target_ip = ip_ans if ip_ans else detected_ip
 
-        # 7. Render Configuration Artifacts
+        # 8. Render Configuration Artifacts
         env_content = self._render_env_production(
             secret_key=secret_key,
             allowed_hosts=allowed_hosts,
@@ -239,6 +359,7 @@ class Command(BaseCommand):
             redis_url=redis_url,
             domain=domain,
             staging_domain=staging_domain,
+            db_password=db_password,
         )
 
         gh_secrets_content = self._render_github_secrets_script(
@@ -252,14 +373,30 @@ class Command(BaseCommand):
 
         if dry_run:
             self.stdout.write(self.style.SUCCESS("\n[DRY RUN] Generated .env.production Preview:"))
-            # Redact secret key in preview
             redacted_env = re.sub(r"DJANGO_SECRET_KEY=.*", "DJANGO_SECRET_KEY=********[REDACTED]", env_content)
+            if db_password:
+                redacted_env = redacted_env.replace(db_password, "********[REDACTED_DB_PASS]")
             self.stdout.write(redacted_env)
-            if dns_provider != "none" and domain not in ("localhost", "127.0.0.1"):
+            if provision_db and target in ("gcp", "aws", "azure"):
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"\n[DRY RUN] Would generate deploy/terraform/{target}/terraform.tfvars "
+                        f"with provision_postgres = true."
+                    )
+                )
+            if dns_provider != "none" and domain not in ("localhost", "127.0.0.1", "auto"):
                 tip = dns_target_ip or DNSManager.detect_public_ip() or "127.0.0.1"
-                self.stdout.write(self.style.SUCCESS(f"\n[DRY RUN] Would update {dns_provider.upper()} A-records: {domain}, {staging_domain} -> {tip}"))
-            self._print_dns_guide(domain, staging_domain, target)
-            self.stdout.write(self.style.SUCCESS(f"\n[DRY RUN] Target selected: {target} (K8s: {k8s_provider}). Dry run complete."))
+                self.stdout.write(
+                    self.style.SUCCESS(
+                        f"\n[DRY RUN] Would update {dns_provider.upper()} A-records: {domain}, {staging_domain} -> {tip}"
+                    )
+                )
+            self._print_dns_guide(domain, staging_domain, target, provision_db=provision_db)
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"\n[DRY RUN] Target selected: {target} (K8s: {k8s_provider}, Provision DB: {provision_db}). Dry run complete."
+                )
+            )
             return
 
         # Write .env.production with 0600 permissions
@@ -267,6 +404,27 @@ class Command(BaseCommand):
         with open(env_path, "w", encoding="utf-8") as f:
             f.write(env_content)
         os.chmod(env_path, 0o600)
+
+        # Write Terraform variables file if target uses Terraform (gcp, aws, azure)
+        if target in ("gcp", "aws", "azure"):
+            tfvars_path = settings.BASE_DIR / "deploy" / "terraform" / target / "terraform.tfvars"
+            tfvars_path.parent.mkdir(parents=True, exist_ok=True)
+            tfvars_content = self._render_terraform_tfvars(
+                target=target,
+                gcp_project_id=gcp_project_id,
+                cloud_region=cloud_region,
+                secret_key=secret_key,
+                allowed_hosts=allowed_hosts,
+                provision_db=provision_db,
+                db_password=db_password,
+                database_url=database_url,
+            )
+            with open(tfvars_path, "w", encoding="utf-8") as f:
+                f.write(tfvars_content)
+            os.chmod(tfvars_path, 0o600)
+            self.stdout.write(
+                self.style.SUCCESS(f"[1.5/3] Generated Terraform variables at {tfvars_path} (mode 0600).")
+            )
 
         # Write deploy helper & deployment state manifest (for ./bin/spotter-destroy)
         deploy_dir = settings.BASE_DIR / "deploy" / "generated"
@@ -283,6 +441,7 @@ class Command(BaseCommand):
             "cloud_region": cloud_region,
             "domain": domain,
             "staging_domain": staging_domain,
+            "provision_db": provision_db,
             "dns_provider": dns_provider,
             "dns_target_ip": dns_target_ip,
             "route53_zone_id": route53_zone_id,
@@ -293,11 +452,11 @@ class Command(BaseCommand):
         with open(state_path, "w", encoding="utf-8") as f:
             json.dump(state_payload, f, indent=2)
 
-        if target == "k8s":
+        if target == "k8s" and domain != "auto":
             self._patch_k8s_domains(domain, staging_domain)
             self.stdout.write(self.style.SUCCESS("[2.5/3] Patched Kubernetes Ingress & Certificate manifests with domain."))
 
-        if dns_provider != "none" and domain not in ("localhost", "127.0.0.1"):
+        if dns_provider != "none" and domain not in ("localhost", "127.0.0.1", "auto"):
             tip = dns_target_ip or DNSManager.detect_public_ip() or "127.0.0.1"
             dns_cfg = {
                 "dns_provider": dns_provider,
@@ -309,7 +468,7 @@ class Command(BaseCommand):
             }
             dns_mgr = DNSManager.from_config(dns_cfg)
             self.stdout.write(f"\n[2.8/3] Applying automated DNS record updates via {dns_provider.upper()}...")
-            sync_domains = [d for d in [domain, staging_domain] if d and d not in ("localhost", "127.0.0.1")]
+            sync_domains = [d for d in [domain, staging_domain] if d and d not in ("localhost", "127.0.0.1", "auto")]
             results = dns_mgr.sync_domains(sync_domains, target_ip=tip)
             for res in results:
                 if res.success:
@@ -320,7 +479,7 @@ class Command(BaseCommand):
         self.stdout.write(self.style.SUCCESS(f"\n[1/3] Successfully wrote {env_path} (mode 0600)."))
         self.stdout.write(self.style.SUCCESS(f"[2/3] Generated GitHub Actions secret helper at {gh_script_path}."))
 
-        # 7. Pre-flight verification
+        # 9. Pre-flight verification
         self.stdout.write("\n[3/3] Running production pre-flight checks...")
         from apps.stations.models import FuelStation
         station_count = FuelStation.objects.filter(is_active_us=True).count()
@@ -330,40 +489,108 @@ class Command(BaseCommand):
         gaz_count = USPlaceGazetteer.objects.count()
         self.stdout.write(f"  * US Gazetteer Entries: {gaz_count}")
 
-        self._print_dns_guide(domain, staging_domain, target)
+        self._print_dns_guide(domain, staging_domain, target, provision_db=provision_db)
 
+        deploy_cmd_hint = (
+            f"terraform -chdir=deploy/terraform/{target} init && terraform -chdir=deploy/terraform/{target} apply"
+            if target in ("gcp", "aws", "azure")
+            else "docker compose -f docker-compose.prod.yml up -d"
+        )
         self.stdout.write(
             self.style.SUCCESS(
                 f"\nDeployment configuration for target '{target}' is ready! "
-                f"Run 'docker compose -f docker-compose.prod.yml up -d' or push to Git for automated CI/CD.\n"
+                f"Run '{deploy_cmd_hint}' or push to Git for automated CI/CD.\n"
                 f"Tip: After your demonstration, run './bin/spotter-destroy' to tear down all resources and DNS records ($0/hr cost)."
             )
         )
 
-    def _print_dns_guide(self, domain: str, staging_domain: str, target: str) -> None:
+    def _detect_gcp_project_id(self) -> str:
+        """Attempt to detect the active GCP project from gcloud config."""
+        import subprocess
+        try:
+            res = subprocess.run(
+                ["gcloud", "config", "get-value", "project"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+            val = res.stdout.strip()
+            if res.returncode == 0 and val and val != "(unset)":
+                return val
+        except Exception:
+            pass
+        return ""
+
+    def _print_dns_guide(self, domain: str, staging_domain: str, target: str, provision_db: bool = False) -> None:
         self.stdout.write("\n" + "=" * 76)
         self.stdout.write(self.style.MIGRATE_HEADING("                  DNS & DOMAIN CONFIGURATION GUIDE"))
         self.stdout.write("=" * 76)
-        self.stdout.write("Configure the following DNS records with your domain registrar or DNS provider:")
-        self.stdout.write(f"  * Production Hostname : {domain}")
-        self.stdout.write(f"  * Staging Hostname    : {staging_domain}")
-        self.stdout.write("\nDNS Records to create:")
-        self.stdout.write(f"  [A Record]     {domain:<32} -> <External Load Balancer IP>")
-        self.stdout.write(f"  [A Record]     {staging_domain:<32} -> <External Load Balancer IP>")
-        if target == "k8s":
-            self.stdout.write("\nTo retrieve your External Ingress IP in GCP GKE:")
-            self.stdout.write("  kubectl get ingress -n production fuel-route-optimizer-ingress")
-            self.stdout.write("  kubectl get ingress -n staging staging-fuel-route-optimizer-ingress")
-            self.stdout.write("\nGoogle-managed SSL certificates will automatically provision once DNS propagates.")
-        elif target == "docker-vps":
-            self.stdout.write("\nTo retrieve your VPS public IP:")
-            self.stdout.write("  curl -s https://api.ipify.org")
-            self.stdout.write("\nCaddy reverse proxy will automatically provision Let's Encrypt TLS certificates.")
+        if domain == "auto":
+            suffix = CLOUD_DOMAIN_SUFFIXES.get(target, "")
+            self.stdout.write(f"Using Cloud-Generated Public HTTPS Domain ({target.upper()}):")
+            self.stdout.write(f"  * Allowed Domain Suffixes : {suffix}")
+            self.stdout.write("  * Custom DNS Setup        : Not required (Cloud provider provisions HTTPS URL automatically)")
+            if target == "gcp":
+                self.stdout.write("  * Retrieve Cloud Run URL  : terraform -chdir=deploy/terraform/gcp output -raw url")
+            elif target == "aws":
+                self.stdout.write("  * Retrieve App Runner URL : terraform -chdir=deploy/terraform/aws output -raw service_url")
+            elif target == "azure":
+                self.stdout.write("  * Retrieve Container FQDN : terraform -chdir=deploy/terraform/azure output -raw fqdn")
+        else:
+            self.stdout.write("Configure the following DNS records with your domain registrar or DNS provider:")
+            self.stdout.write(f"  * Production Hostname : {domain}")
+            self.stdout.write(f"  * Staging Hostname    : {staging_domain}")
+            self.stdout.write("\nDNS Records to create:")
+            self.stdout.write(f"  [A Record]     {domain:<32} -> <External Load Balancer IP>")
+            self.stdout.write(f"  [A Record]     {staging_domain:<32} -> <External Load Balancer IP>")
+            if target == "k8s":
+                self.stdout.write("\nTo retrieve your External Ingress IP in GCP GKE:")
+                self.stdout.write("  kubectl get ingress -n production fuel-route-optimizer-ingress")
+                self.stdout.write("  kubectl get ingress -n staging staging-fuel-route-optimizer-ingress")
+                self.stdout.write("\nGoogle-managed SSL certificates will automatically provision once DNS propagates.")
+            elif target == "docker-vps":
+                self.stdout.write("\nTo retrieve your VPS public IP:")
+                self.stdout.write("  curl -s https://api.ipify.org")
+                self.stdout.write("\nCaddy reverse proxy will automatically provision Let's Encrypt TLS certificates.")
+        if provision_db:
+            self.stdout.write(f"\nManaged PostgreSQL 16 Provisioning: ENABLED (from scratch on {target.upper()})")
         self.stdout.write("=" * 76 + "\n")
+
+    def _render_terraform_tfvars(
+        self,
+        target: str,
+        gcp_project_id: str,
+        cloud_region: str,
+        secret_key: str,
+        allowed_hosts: str,
+        provision_db: bool,
+        db_password: str,
+        database_url: str,
+    ) -> str:
+        lines = [
+            f"# Generated by manage.py deploy_wizard for target: {target}",
+        ]
+        if target == "gcp":
+            lines.append(f'project_id         = "{gcp_project_id}"')
+            lines.append(f'region             = "{cloud_region}"')
+        elif target == "aws":
+            lines.append(f'aws_region         = "{cloud_region}"')
+        elif target == "azure":
+            lines.append(f'location           = "{cloud_region}"')
+
+        lines.extend([
+            f'django_secret_key  = "{secret_key}"',
+            f'allowed_hosts      = "{allowed_hosts}"',
+            f"provision_postgres = {'true' if provision_db else 'false'}",
+            f'db_password        = "{db_password}"',
+            f'database_url       = "{database_url if not provision_db else ""}"',
+            "",
+        ])
+        return "\n".join(lines)
 
     def _patch_k8s_domains(self, domain: str, staging_domain: str) -> None:
         """Patch Kubernetes overlay manifests with user-specified domains."""
-        # Production overlay
         prod_cert = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke" / "certificate.yaml"
         if prod_cert.exists():
             prod_cert.write_text(
@@ -378,7 +605,6 @@ class Command(BaseCommand):
                 encoding="utf-8",
             )
 
-        # Staging overlay
         stag_cert = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / "gcp-gke-staging" / "certificate.yaml"
         if stag_cert.exists():
             stag_cert.write_text(
@@ -401,7 +627,9 @@ class Command(BaseCommand):
         redis_url: str,
         domain: str,
         staging_domain: str = "",
+        db_password: str = "",
     ) -> str:
+        extra_pg = f"\nPOSTGRES_PASSWORD={db_password}" if db_password else ""
         return f"""# Production Environment Configuration
 # Generated by manage.py deploy_wizard
 DJANGO_SETTINGS_MODULE=config.settings.production
@@ -415,7 +643,7 @@ SECURE_SSL_REDIRECT=True
 SECURE_HSTS_SECONDS=31536000
 
 # Database & Cache
-DATABASE_URL={database_url}
+DATABASE_URL={database_url}{extra_pg}
 REDIS_URL={redis_url}
 
 # Upstream Geocoder & Routing Timeouts

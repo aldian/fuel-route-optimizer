@@ -237,7 +237,7 @@ class Command(BaseCommand):
         auto_yes = bool(options.get("yes", False))
 
         domains_to_delete = [
-            d for d in [domain, staging_domain] if d and d not in ("localhost", "127.0.0.1", "staging.localhost")
+            d for d in [domain, staging_domain] if d and d not in ("localhost", "127.0.0.1", "staging.localhost", "auto")
         ]
 
         self.stdout.write("\nTeardown Plan Summary:")
@@ -385,6 +385,10 @@ class Command(BaseCommand):
             settings.BASE_DIR / ".env.production",
             settings.BASE_DIR / "deploy" / "generated" / "set_github_secrets.sh",
             state_path,
+            settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
+            settings.BASE_DIR / "deploy" / "terraform" / "aws" / "terraform.tfvars",
+            settings.BASE_DIR / "deploy" / "terraform" / "azure" / "terraform.tfvars",
+            settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfvars",
         ]
         for path in files_to_remove:
             if path.exists():
