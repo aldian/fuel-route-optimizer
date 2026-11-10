@@ -21,6 +21,7 @@ def preserve_live_deployment_files():
         settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml",
         settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh",
         settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfvars",
     ]
     backups: dict[Path, tuple[bytes, int]] = {}
     for p in protected_paths:
@@ -291,6 +292,29 @@ def test_destroy_deployment_k8s_and_cluster_dry_run() -> None:
         stdout=out_aks,
     )
     assert "az aks delete --name demo-aks" in out_aks.getvalue()
+
+    # Test gcp-gke cluster teardown when deploy/terraform/gcp-gke/terraform.tfstate exists
+    gke_tfstate = settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfstate"
+    had_state = gke_tfstate.exists()
+    try:
+        if not had_state:
+            gke_tfstate.write_text("{}", encoding="utf-8")
+        out_tf_gke = io.StringIO()
+        with patch("subprocess.run", return_value=MagicMock(stdout="Destroyed GKE\n", returncode=0)) as mock_run:
+            call_command(
+                "destroy_deployment",
+                target="k8s",
+                k8s_provider="gcp-gke",
+                destroy_cluster=True,
+                keep_local_artifacts=True,
+                yes=True,
+                stdout=out_tf_gke,
+            )
+            executed_cmds = [" ".join(call.args[0]) for call in mock_run.call_args_list]
+            assert "terraform -chdir=deploy/terraform/gcp-gke destroy -auto-approve" in executed_cmds
+    finally:
+        if not had_state and gke_tfstate.exists():
+            gke_tfstate.unlink()
 
 
 def test_destroy_deployment_terraform_and_paas_dry_run() -> None:

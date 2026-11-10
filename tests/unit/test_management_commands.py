@@ -1,12 +1,40 @@
 """Unit tests for Django management commands: load_fuel_stations, load_us_gazetteer, and deploy_wizard."""
 from io import StringIO
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 import pytest
+from django.conf import settings
 from django.core.management import call_command
 from apps.routing.models import USPlaceGazetteer
 from apps.stations.models import FuelStation
+
+
+@pytest.fixture(autouse=True)
+def preserve_live_deployment_files():
+    """Back up and restore any live .env.production or terraform.tfvars during unit tests."""
+    protected_paths = [
+        settings.BASE_DIR / ".env.production",
+        settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json",
+        settings.BASE_DIR / "deploy" / "generated" / "set_github_secrets.sh",
+        settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml",
+        settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfvars",
+    ]
+    backups: dict[Path, tuple[bytes, int]] = {}
+    for p in protected_paths:
+        if p.exists():
+            backups[p] = (p.read_bytes(), p.stat().st_mode & 0o777)
+    yield
+    for p in protected_paths:
+        if p in backups:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(backups[p][0])
+            os.chmod(p, backups[p][1])
+        elif p.exists():
+            p.unlink()
 
 
 @pytest.mark.django_db

@@ -9,6 +9,7 @@ resources:
   - certificate.yaml
 
 patches:
+  - path: service_patch.yaml
   - path: ingress_patch.yaml
 
 images:

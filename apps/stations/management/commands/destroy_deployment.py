@@ -345,9 +345,13 @@ class Command(BaseCommand):
 
             if destroy_cluster:
                 if k8s_provider == "gcp-gke":
-                    commands.append(
-                        ["gcloud", "container", "clusters", "delete", cluster_name, f"--region={region}", "--quiet"]
-                    )
+                    gke_tfstate = settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfstate"
+                    if gke_tfstate.exists() and not dry_run:
+                        commands.append(["terraform", "-chdir=deploy/terraform/gcp-gke", "destroy", "-auto-approve"])
+                    else:
+                        commands.append(
+                            ["gcloud", "container", "clusters", "delete", cluster_name, f"--region={region}", "--quiet"]
+                        )
                 elif k8s_provider == "aws-eks":
                     commands.append(["eksctl", "delete", "cluster", "--name", cluster_name, "--region", region])
                 elif k8s_provider == "azure-aks":
