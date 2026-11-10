@@ -146,21 +146,38 @@ def test_route_optimization_validation_errors() -> None:
 def test_fuel_stations_list_view() -> None:
     client = APIClient()
 
-    # List all
+    # List all + verify price_summary
     resp = client.get("/api/v1/stations/")
     assert resp.status_code == status.HTTP_200_OK
     data = resp.json()
     assert data["count"] == 2
+    assert data["price_summary"]["min_retail_price_usd"] == "2.850"
+    assert data["price_summary"]["max_retail_price_usd"] == "2.990"
 
-    # Filter by state
-    resp_oh = client.get("/api/v1/stations/?state=OH")
+    # Filter by state, search, min_price, max_price, and ordering
+    resp_oh = client.get("/api/v1/stations/?state=OH&search=Ohio&min_price=2.80&max_price=2.90&ordering=-retail_price")
     assert resp_oh.status_code == status.HTTP_200_OK
     assert resp_oh.json()["count"] == 1
 
-    # Radius search around Toledo
-    resp_rad = client.get("/api/v1/stations/?lat=41.6528&lng=-83.5379&radius_miles=10.0")
+    # Invalid price filter returns 400
+    resp_bad_price = client.get("/api/v1/stations/?max_price=not-a-number&limit=bad")
+    assert resp_bad_price.status_code == status.HTTP_400_BAD_REQUEST
+    assert resp_bad_price.json()["error"]["code"] == "INVALID_PRICE_FILTER"
+
+    # Radius search around Toledo with filters and distance ordering
+    resp_rad = client.get(
+        "/api/v1/stations/?lat=41.6528&lng=-83.5379&radius_miles=10.0"
+        "&state=OH&city=Toledo&search=Ohio&min_price=2.80&max_price=2.90&ordering=distance"
+    )
     assert resp_rad.status_code == status.HTTP_200_OK
     assert resp_rad.json()["count"] == 1
+    assert resp_rad.json()["price_summary"]["min_retail_price_usd"] == "2.850"
+
+    # Empty radius search returns null price_summary fields
+    resp_empty_rad = client.get("/api/v1/stations/?lat=41.6528&lng=-83.5379&radius_miles=10.0&max_price=1.00")
+    assert resp_empty_rad.status_code == status.HTTP_200_OK
+    assert resp_empty_rad.json()["count"] == 0
+    assert resp_empty_rad.json()["price_summary"]["min_retail_price_usd"] is None
 
 
 @pytest.mark.django_db
