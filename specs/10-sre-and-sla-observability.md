@@ -14,8 +14,8 @@ It provides:
 3. **REST SLA Report, Interactive SRE Console, Synthetic Probe & Prometheus Metrics Endpoints**:
    - `GET /api/v1/sre/sla/`: Real-time JSON SLA compliance scorecard (aggregated across workers via shared Redis cache when configured).
    - `GET /api/v1/sre/metrics/`: Prometheus / OpenMetrics text exposition for Grafana dashboards and Alertmanager rules.
-   - `GET /api/v1/sre/dashboard/`: Self-contained interactive SRE & SLO Observability Console with real-time Error Budget burn bar, P50/P95/P99 latency gauges, Redis cache hit ratio, and one-click live US corridor load/cache drill.
-   - `POST /api/v1/sre/probe/`: Executes an active synthetic multi-corridor US optimization & cache drill to verify all 6 SLOs under live load.
+   - `GET /api/v1/sre/dashboard/`: Self-contained interactive SRE & SLO Observability Console with real-time Error Budget burn bar, P50/P95/P99 latency gauges, interactive **SVG Latency Percentiles (P50 / P95 / P99) vs. SLA Ceilings** chart, Redis cache hit ratio, 1-Click Export SLA Audit JSON, and one-click per-corridor or 5-corridor (`15` probes) live US corridor load/cache drills.
+   - `POST /api/v1/sre/probe/`: Executes an active synthetic multi-corridor (`15` probes across `I-95`, `I-35`, `I-80`, `I-5`, `I-10`) or single-corridor (`{"corridor": "..."}`) US optimization & cache drill to verify all 6 SLOs under live load.
 4. **One-Command CLI SLA Auditor (`./bin/spotter-sre` / `python manage.py check_sla`)**: Runs active synthetic probes + live telemetry checks to verify all 6 SLAs from the terminal or CI/CD, with optional `--remote-url` and `--auto-rollback` integration if an SLA is breached.
 5. **Cloud-Native Uptime Monitoring**: Provisions a global HTTPS Uptime Check (`google_monitoring_uptime_check_config`) on Google Cloud Monitoring when deployed to GCP Cloud Run via Terraform.
 
@@ -74,6 +74,11 @@ In accordance with [Spec 08](./08-feature-flags-and-zero-downtime-database-migra
      - `telemetry`: Request counts, cache hit rate, latency percentiles (`p50`, `p95`, `p99`), and external call statistics.
 2. **`GET /api/v1/sre/metrics/`**:
    - Returns `text/plain; version=0.0.4` Prometheus metrics including `spotter_sla_compliant`, `spotter_requests_total`, `spotter_compute_latency_ms_p99`, `spotter_error_budget_remaining_pct`, and `spotter_active_us_stations`.
+3. **`POST /api/v1/sre/probe/`**:
+   - Accepts optional `{"iterations_per_route": 1..5, "corridor": "<optional corridor label or prefix>"}`.
+   - Executes synthetic probes across all 5 canonical US Interstate freight corridors (`I-95: New York, NY -> Philadelphia, PA`, `I-35: Dallas, TX -> Austin, TX`, `I-80: Chicago, IL -> Des Moines, IA`, `I-5: Los Angeles, CA -> San Francisco, CA`, `I-10: Jacksonville, FL -> El Paso, TX`) or a single selected corridor, returning per-probe `status_code`, `cache_hit`, `compute_time_ms`, `total_response_time_ms`, `fuel_stops`, `total_fuel_spend_usd`, and the updated `sla_report`.
+4. **`GET /api/v1/sre/dashboard/`**:
+   - Renders the accessible, high-contrast SRE & SLO Observability Console with real-time 5s auto-refresh, 1-click per-corridor and 5-corridor (`15` probes) drill buttons, interactive SVG Latency Percentiles (P50 / P95 / P99) vs. SLA Ceilings chart, and 1-Click Export SLA Audit JSON download.
 
 ### 4.2 CLI Command (`./bin/spotter-sre` / `python manage.py check_sla`)
 ```bash

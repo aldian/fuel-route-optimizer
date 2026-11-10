@@ -10,6 +10,11 @@
       "key": "base_url",
       "value": "http://127.0.0.1:8000",
       "type": "string"
+    },
+    {
+      "key": "cloud_run_url",
+      "value": "https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app",
+      "type": "string"
     }
   ],
   "item": [
@@ -217,7 +222,7 @@
       "response": []
     },
     {
-      "name": "04. Fuel Stations Proximity Search",
+      "name": "04. Fuel Stations Proximity Search (3D cKDTree)",
       "event": [
         {
           "listen": "test",
@@ -226,9 +231,12 @@
               "pm.test('Status code is 200', function () {",
               "    pm.response.to.have.status(200);",
               "});",
-              "pm.test('Returns nearby stations within radius', function () {",
+              "pm.test('Returns nearby stations within radius with price summary', function () {",
               "    var json = pm.response.json();",
               "    pm.expect(json.count).to.be.above(0);",
+              "    pm.expect(json.price_summary).to.have.property('min_retail_price_usd');",
+              "    pm.expect(json.price_summary).to.have.property('avg_retail_price_usd');",
+              "    pm.expect(json.price_summary).to.have.property('max_retail_price_usd');",
               "});"
             ],
             "type": "text/javascript"
@@ -239,7 +247,7 @@
         "method": "GET",
         "header": [],
         "url": {
-          "raw": "{{base_url}}/api/v1/stations/?lat=41.6528&lng=-83.5379&radius_miles=25.0",
+          "raw": "{{base_url}}/api/v1/stations/?lat=41.6528&lon=-83.5379&radius_miles=25.0&ordering=distance",
           "host": [
             "{{base_url}}"
           ],
@@ -255,12 +263,16 @@
               "value": "41.6528"
             },
             {
-              "key": "lng",
+              "key": "lon",
               "value": "-83.5379"
             },
             {
               "key": "radius_miles",
               "value": "25.0"
+            },
+            {
+              "key": "ordering",
+              "value": "distance"
             }
           ]
         }
@@ -268,7 +280,155 @@
       "response": []
     },
     {
-      "name": "05. Error Validation - Non-US Location Rejection",
+      "name": "05. Fuel Stations Price & State Analytics (Texas <= $3.00/gal)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('All returned stations are <= $3.00/gal in TX', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.count).to.be.above(0);",
+              "    pm.expect(parseFloat(json.price_summary.max_retail_price_usd)).to.be.at.most(3.00);",
+              "    json.results.forEach(function(st) {",
+              "        pm.expect(st.state).to.eql('TX');",
+              "        pm.expect(parseFloat(st.retail_price)).to.be.at.most(3.00);",
+              "    });",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/stations/?state=TX&max_price=3.00&ordering=retail_price&limit=5",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "stations",
+            ""
+          ],
+          "query": [
+            {
+              "key": "state",
+              "value": "TX"
+            },
+            {
+              "key": "max_price",
+              "value": "3.00"
+            },
+            {
+              "key": "ordering",
+              "value": "retail_price"
+            },
+            {
+              "key": "limit",
+              "value": "5"
+            }
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "06. SRE 6-SLO Compliance Scorecard",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Evaluates all 6 authoritative SLOs', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.slos.length).to.eql(6);",
+              "    pm.expect(json.error_budget).to.have.property('error_budget_remaining_pct');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{base_url}}/api/v1/sre/sla/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sre",
+            "sla",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "07. SRE Live Single-Corridor Probe (I-10)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Status code is 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Executes synthetic I-10 corridor probe and returns SLA report', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.corridors_tested).to.eql(1);",
+              "    pm.expect(json.probes_executed).to.eql(2);",
+              "    pm.expect(json.sla_report).to.have.property('overall_status');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"corridor\": \"I-10: Jacksonville, FL -> El Paso, TX\",\n  \"iterations_per_route\": 2\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/api/v1/sre/probe/",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "sre",
+            "probe",
+            ""
+          ]
+        }
+      },
+      "response": []
+    },
+    {
+      "name": "08. Error Validation - Non-US Location Rejection",
       "event": [
         {
           "listen": "test",
@@ -314,7 +474,7 @@
       "response": []
     },
     {
-      "name": "06. System Health & Readiness",
+      "name": "09. System Health & Readiness",
       "event": [
         {
           "listen": "test",
@@ -352,7 +512,7 @@
       "response": []
     },
     {
-      "name": "07. OpenAPI 3.1 Schema",
+      "name": "10. OpenAPI 3.1 Schema",
       "event": [
         {
           "listen": "test",

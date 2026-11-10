@@ -17,6 +17,7 @@ Given any origin and destination within the USA, the API calculates the driving 
 > - **Interactive Swagger UI (OpenAPI 3.0)**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/docs/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/docs/)
 > - **Coast-to-Coast Route Map (`New York, NY` $\to$ `Los Angeles, CA`)**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/route/map/?start=New+York,+NY&finish=Los+Angeles,+CA`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/route/map/?start=New+York,+NY&finish=Los+Angeles,+CA)
 > - **Interactive SRE & 6-SLO Observability Console**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/sre/dashboard/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/sre/dashboard/)
+> - **Stations Search & Price Analytics API (`TX <= $3.00/gal`)**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/stations/?state=TX&max_price=3.00&limit=5`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/stations/?state=TX&max_price=3.00&limit=5)
 > - **System Health & Spatial Index Readiness**: [`https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/health/`](https://fuel-route-optimizer-v4u5kbnooq-uc.a.run.app/api/v1/health/)
 
 > [!IMPORTANT]
@@ -85,8 +86,8 @@ flowchart TD
    - Automatically rejects Canadian/Mexican locations (e.g., Toronto, Montreal, Tijuana) and prevents international shortcuts (e.g., Ontario detour between Detroit and Buffalo).
 
 5. **Tested to $\ge 95\%$ Coverage Gate**:
-   - 63 tests across Unit, Integration, Live-Server E2E with real TCP sockets and concurrency stress, and Latency Benchmarks.
-   - Enforced in CI via `--cov-fail-under=95` (**95.73% achieved**).
+   - 134 automated tests across Unit, Integration, Live-Server E2E with real TCP sockets and concurrency stress, and Latency Benchmarks.
+   - Enforced in CI via `--cov-fail-under=95` (**95.55%+ achieved**).
 
 ---
 
@@ -223,8 +224,16 @@ Supports identical capabilities via HTTP GET for easy testing:
 GET /api/v1/route/?start=Dallas,+TX&finish=Austin,+TX&mpg=10.0
 ```
 
-### 4.3 Accessible Standalone Map (`GET /api/v1/route/map/`)
-Renders a full-screen, accessible Leaflet map (`--text: #000000;` contrast compliant) highlighting the route polyline, fuel stop markers with pricing popups, and turn-by-turn overview.
+### 4.3 Accessible Standalone Map & Route Planner (`GET /api/v1/route/map/`)
+Renders a full-screen, accessible Leaflet map (`--text: #000000;` contrast compliant) highlighting the route polyline, numbered vector SVG fuel stop markers with pricing popups, an in-page **Route Planner** form (Start, Destination, Max Range, Efficiency MPG, Start Fuel), 1-click **Popular US Freight Corridors** preset chips (`I-80`, `I-10`, `I-90`, `I-35`, `Short Haul: Chicago -> Indy`), an interactive **SVG Stop-by-Stop Fuel Price & Tank Profile** chart, and a **Lowest-Price Corridor Station** highlight card.
+
+### 4.4 US Fuel Stations Search, Proximity & Price Analytics (`GET /api/v1/stations/`)
+Queries the `6,626` deduplicated US OPIS truckstops with support for state/city/keyword filtering, retail price bounds (`?min_price=`, `?max_price=`), 3D `cKDTree` spatial proximity (`?lat=&lon=&radius_miles=`), sorting (`?ordering=retail_price|-retail_price|distance|opis_truckstop_id`), and aggregated `price_summary` statistics (`min_retail_price_usd`, `avg_retail_price_usd`, `max_retail_price_usd`):
+
+```
+GET /api/v1/stations/?state=TX&max_price=3.00&ordering=retail_price&limit=5
+GET /api/v1/stations/?lat=35.2220&lon=-101.8313&radius_miles=25&ordering=distance
+```
 
 ---
 
@@ -250,11 +259,11 @@ Run the complete test suite enforcing the **$\ge 95\%$ test coverage gate**:
 pytest tests/ --cov=apps --cov-branch --cov-report=term-missing --cov-fail-under=95
 ```
 
-### Test Suite Structure
-- `tests/unit/`: 48 unit tests covering models, spatial indexing, routing providers, boundary ray-casting, solver, and viewsets.
+### Test Suite Structure (`134` Total Tests)
+- `tests/unit/`: 118 unit tests covering models, spatial indexing, routing providers, boundary ray-casting, monotonic stack solver, API viewsets, SRE telemetry, multi-cloud deploy wizard, and Kubernetes/PaaS/Terraform manifest validators.
 - `tests/integration/`: 8 API integration tests (`TC-INT-01` through `TC-INT-08`) testing cache roundtrips, call budget enforcement, failover, and non-US rejection.
-- `tests/e2e/`: 6 live-server E2E tests (`TC-E2E-01` through `TC-E2E-06`) running against real TCP sockets, multi-client concurrency (20 simultaneous threads), and Leaflet HTML rendering.
-- `tests/benchmarks/`: Coast-to-Coast compute latency benchmark verifying the $< 15\text{ ms}$ threshold.
+- `tests/e2e/`: 7 live-server E2E tests running against real TCP sockets, multi-client concurrency (20 simultaneous threads), and Leaflet HTML rendering.
+- `tests/benchmarks/`: Coast-to-coast compute and spatial projection latency benchmark verifying the $< 15\text{ ms}$ threshold.
 
 ---
 
@@ -297,10 +306,13 @@ The wizard guides administrators through:
 ```
 
 ### 7.2 Multi-Cloud Deployment Artifacts
-- **Docker Compose + Caddy**: `docker-compose.prod.yml` and `deploy/caddy/Caddyfile` for single-node VPS with automated Let's Encrypt SSL.
-- **Kubernetes / GCP GKE**: `deploy/k8s/base/` with Kustomize overlays in `deploy/k8s/overlays/gcp-gke/` including HPA auto-scaling and Cloud Armor security.
-- **Terraform IaC**: `deploy/terraform/gcp/main.tf` provisioning GKE Autopilot, Cloud SQL PostgreSQL, and Memorystore Redis.
-- **PaaS**: `fly.toml` (Fly.io) and `render.yaml` (Render blueprint).
+- **Docker Compose + Caddy**: `docker-compose.prod.yml` and `deploy/caddy/Caddyfile` for single-node VPS with automated Let's Encrypt SSL (`auto_https` + configurable ports).
+- **Kubernetes / GCP GKE**: `deploy/k8s/base/` with Kustomize overlays in `deploy/k8s/overlays/{gcp-gke,aws-eks,azure-aks,generic,canary,blue-green}/` including in-cluster PostgreSQL 16 (`StatefulSet: db`), Redis 7 (`Deployment: redis`), HPA auto-scaling, and LoadBalancer/Ingress exposure.
+- **Terraform IaC**:
+  - `deploy/terraform/gcp/main.tf`: Provisions Google Cloud Run v2, Cloud SQL PostgreSQL 16, Cloud Memorystore Redis 7, Secret Manager, and Google Cloud Monitoring Uptime Check.
+  - `deploy/terraform/gcp-gke/main.tf`: Provisions a Google Kubernetes Engine (GKE) cluster (`e2-standard-2` node pool) and Artifact Registry for full Kubernetes deployments.
+  - `deploy/terraform/aws/main.tf` & `deploy/terraform/azure/main.tf`: Provision AWS App Runner + RDS PostgreSQL 16 + ElastiCache Redis 7 and Azure Container Apps + Azure Database for PostgreSQL Flexible Server + Azure Cache for Redis.
+- **PaaS**: `fly.toml` (Fly.io), `render.yaml` (Render blueprint), and `railway.json` (Railway).
 
 ### 7.3 Dynamic Feature Flags & Kill-Switches
 Decouple deployment from release and manage live features with sub-millisecond evaluation (<0.05ms):
@@ -373,8 +385,8 @@ Verify at any moment whether the system meets all **6 Authoritative SLAs** (`>= 
 ./bin/spotter-sre --remote-url https://api.fuel-optimizer.example.com --auto-rollback --rollback-target k8s
 ```
 
-- **Interactive SRE & SLO Observability Console**: `GET /api/v1/sre/dashboard/` (live web dashboard with Error Budget gauge, `P50`/`P95`/`P99` latency telemetry aggregated across Cloud Run workers via Cloud Memorystore Redis, 6-SLO scorecard, and 1-click Live Multi-Corridor Drill).
-- **Live Multi-Corridor Synthetic Drill**: `POST /api/v1/sre/probe/` (executes 12 optimization and cache probes across 4 US Interstate freight corridors: `I-95`, `I-35`, `I-80`, `I-5`).
+- **Interactive SRE & SLO Observability Console**: `GET /api/v1/sre/dashboard/` (live web dashboard with Error Budget gauge, `P50`/`P95`/`P99` latency telemetry aggregated across Cloud Run workers via Cloud Memorystore Redis, interactive **SVG Latency Percentiles vs. SLA Ceilings** chart, 6-SLO scorecard, 1-click per-corridor and 5-corridor synthetic drills, and **1-Click Export SLA Audit JSON**).
+- **Live Multi-Corridor Synthetic Drill**: `POST /api/v1/sre/probe/` (executes 15 optimization and cache probes across 5 US Interstate freight corridors: `I-95`, `I-35`, `I-80`, `I-5`, `I-10`, or probes a single selected corridor via `{"corridor": "..."}`).
 - **REST SLA Compliance Endpoint**: `GET /api/v1/sre/sla/` (returns JSON scorecard, percentile latencies `p50`/`p95`/`p99`, and remaining Error Budget).
 - **Prometheus / OpenMetrics Exporter**: `GET /api/v1/sre/metrics/` (exposes `spotter_sla_compliant`, `spotter_compute_latency_ms_p99`, `spotter_error_budget_remaining_pct`, etc. for Grafana & Alertmanager).
 - **Google Cloud Monitoring Uptime Check**: Provisioned automatically via Terraform (`google_monitoring_uptime_check_config.health_check` in [`deploy/terraform/gcp/main.tf`](deploy/terraform/gcp/main.tf)) to probe `/api/v1/health/` every 60 seconds from global GCP POPs.

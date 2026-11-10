@@ -12,9 +12,13 @@ All API endpoints are versioned under `/api/v1/` and documented automatically vi
 | :--- | :--- | :--- | :--- |
 | `POST` | `/api/v1/route/` | `application/json` | Compute optimal US driving route, fuel stops, total fuel spend, GeoJSON map, and interactive `map_url`. |
 | `GET` | `/api/v1/route/` | `application/json` | Query-parameter equivalent of `POST /api/v1/route/` (`?start=New+York,+NY&finish=Los+Angeles,+CA`). |
-| `GET` | `/api/v1/route/map/` | `text/html` | Render self-contained interactive Leaflet + OpenStreetMap route & fuel-stop map in any browser or iframe. |
-| `GET` | `/api/v1/stations/` | `application/json` | Inspect loaded US OPIS fuel stations with filtering by `state`, `city`, or `(lat, lng, radius_miles)`. |
+| `GET` | `/api/v1/route/map/` | `text/html` | Render self-contained interactive Leaflet + OpenStreetMap route & fuel-stop map with in-page Route Planner form, 5 US freight corridor presets, and SVG price/tank profile chart. |
+| `GET` | `/api/v1/stations/` | `application/json` | Inspect loaded US OPIS fuel stations with filtering by `state`, `city`, `search`, `min_price`, `max_price`, or `(lat, lon, radius_miles)`, sorting (`ordering`), and aggregated `price_summary` statistics. |
 | `GET` | `/api/v1/health/` | `application/json` | Health & readiness probe reporting Django version, loaded station count, gazetteer status, and `cKDTree` state. |
+| `GET` | `/api/v1/sre/sla/` | `application/json` | Real-time 6-SLO compliance scorecard, latency percentiles (`P50`/`P95`/`P99`), and Error Budget burn report. |
+| `POST` | `/api/v1/sre/probe/` | `application/json` | Execute synthetic multi-corridor (`15` probes across 5 US Interstates) or single-corridor optimization & cache drills. |
+| `GET` | `/api/v1/sre/dashboard/` | `text/html` | Interactive SRE & SLO Observability Console with SVG Latency Percentiles chart, per-corridor probe buttons, and 1-Click Export SLA Audit JSON. |
+| `GET` | `/api/v1/sre/metrics/` | `text/plain` | Prometheus / OpenMetrics exporter for Grafana and Alertmanager. |
 | `GET` | `/api/schema/` | `application/vnd.oai.openapi` | Machine-readable OpenAPI 3.1 specification. |
 | `GET` | `/api/docs/` | `text/html` | Interactive Swagger UI API explorer. |
 
@@ -233,6 +237,10 @@ flowchart LR
    - Opening `map_url` after calling `/api/v1/route/` hits the warm `TwoTierCache` immediately (`0` additional routing or geocoding requests, `< 10 ms` server render).
 5. **OpenStreetMap Tile Usage Policy & Referrer Compliance**:
    - Both Django (`SECURE_REFERRER_POLICY = "strict-origin-when-cross-origin"`) and the HTML document (`<meta name="referrer" content="strict-origin-when-cross-origin">`) explicitly send the origin `Referer` header when fetching map tiles over HTTPS so OpenStreetMap (`tile.openstreetmap.org`) and CDN tile servers never block cross-origin tile requests with `403 Access blocked`.
+6. **Interactive Route Planner Form, Freight Corridor Presets & SVG Tank/Price Profile**:
+   - Includes an accessible `<search><form id="route-planner-form">` allowing users to change **Start Location**, **Destination**, **Max Range (mi)**, **Efficiency (MPG)**, and **Start Fuel (gal)** directly in the browser without returning to Postman.
+   - Provides 1-click **Popular US Freight Corridors** preset chips (`I-80: NY -> LA`, `I-10: Jacksonville -> El Paso`, `I-90: Seattle -> Boston`, `I-35: Laredo -> Duluth`, `Short Haul: Chicago -> Indy`).
+   - Renders an interactive **SVG Stop-by-Stop Fuel Price & Tank Profile** bar chart (`$/gal` color-coded for lowest vs. standard stops, plus arrival/departure fuel tank gallon bars) and a clickable **Lowest-Price Corridor Station** highlight card that pans and opens the station popup on the Leaflet map.
 
 ---
 
@@ -259,6 +267,9 @@ All `4xx` and `5xx` responses share a consistent JSON error envelope via a custo
 | :--- | :--- | :--- |
 | `400 Bad Request` | `INVALID_REQUEST_PARAMETERS` | Missing `start`/`finish` or numeric override out of valid bounds. |
 | `400 Bad Request` | `LOCATION_OUTSIDE_USA` | Resolved `start` or `finish` lies outside the United States (e.g., Canada, Mexico, overseas). |
+| `400 Bad Request` | `INVALID_COORDINATES` | Non-numeric `lat`, `lon`/`lng`, or `radius_miles` on `/api/v1/stations/`. |
+| `400 Bad Request` | `INVALID_PRICE_FILTER` | Non-numeric, non-positive, or inverted (`min_price > max_price`) retail price filter on `/api/v1/stations/`. |
+| `400 Bad Request` | `INVALID_ORDERING` | Unsupported `ordering` field on `/api/v1/stations/`. |
 | `404 Not Found` | `LOCATION_NOT_FOUND` | Unrecognized location string could not be resolved by local gazetteer or US geocoders. |
 | `422 Unprocessable Entity` | `NO_DRIVABLE_ROUTE` | No road connection exists between endpoints (e.g., `Honolulu, HI` to `Los Angeles, CA`). |
 | `422 Unprocessable Entity` | `DOMESTIC_US_ROUTE_UNAVAILABLE` | Route cannot be completed within domestic US highway network. |
@@ -271,13 +282,17 @@ All `4xx` and `5xx` responses share a consistent JSON error envelope via a custo
 ## 5. Supporting Endpoints
 
 ### 5.1 `GET /api/v1/stations/`
-Allows reviewers to inspect the cleaned, deduplicated US OPIS dataset:
+Allows reviewers and dispatchers to query, filter, sort, and analyze the cleaned, deduplicated US OPIS dataset (`6,626` active US stations):
 * Query Parameters:
-  - `state` (e.g., `?state=TX`)
-  - `city` (e.g., `?city=Amarillo`)
-  - `lat`, `lng`, `radius_miles` (e.g., `?lat=35.2220&lng=-101.8313&radius_miles=10` — powered by `StationSpatialIndex`)
-  - `ordering` (`retail_price`, `-retail_price`, `opis_truckstop_id`)
-  - `limit` (default `25`, max `100`), `offset`
+  - `state`: 2-letter US state code filter (e.g., `?state=TX`).
+  - `city`: Case-insensitive city substring filter (e.g., `?city=Amarillo`).
+  - `search`: Case-insensitive keyword search across `truckstop_name`, `address`, and `city` (e.g., `?search=Love`).
+  - `min_price`, `max_price`: Minimum and maximum retail fuel price in USD/gallon (e.g., `?min_price=2.50&max_price=3.00`).
+  - `lat`, `lon` (or `lng`), `radius_miles`: 3D ECEF `cKDTree` spatial proximity query (e.g., `?lat=35.2220&lon=-101.8313&radius_miles=25` — powered by `StationSpatialIndex`).
+  - `ordering`: Sort order (`retail_price`, `-retail_price`, `opis_truckstop_id`, `-opis_truckstop_id`, or `distance` when `lat`/`lon` are provided).
+  - `limit` (default `25`, max `100`), `offset` (default `0`).
+* Response Envelope:
+  - Includes `count`, `limit`, `offset`, `price_summary` (`min_retail_price_usd`, `avg_retail_price_usd`, `max_retail_price_usd` across all matching stations), and `results`.
 
 ### 5.2 `GET /api/v1/health/`
 Returns deterministic readiness metadata:
