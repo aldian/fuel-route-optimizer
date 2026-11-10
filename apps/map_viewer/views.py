@@ -182,6 +182,100 @@ class RouteMapView(View):
       padding: 4px 10px;
       border-radius: 6px;
     }}
+    .header-right {{
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }}
+    .header-nav {{
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }}
+    .nav-link {{
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #000000;
+      background: #F1F5F9;
+      border: 1px solid #475569;
+      border-radius: 6px;
+      padding: 4px 10px;
+      text-decoration: none;
+      transition: background 0.12s ease;
+    }}
+    .nav-link:hover {{
+      background: #E2E8F0;
+      border-color: #000000;
+    }}
+    .nav-link:focus-visible,
+    .toolbar-btn:focus-visible {{
+      outline: 3px solid var(--primary);
+      outline-offset: 2px;
+    }}
+    .toolbar-wrap {{
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }}
+    [role="toolbar"] [role="group"] {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }}
+    .toolbar-btn {{
+      font: inherit;
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: #000000;
+      background: #F1F5F9;
+      border: 1.5px solid #475569;
+      border-radius: 6px;
+      padding: 5px 9px;
+      min-inline-size: 24px;
+      min-block-size: 32px;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      cursor: pointer;
+    }}
+    @media (hover: hover) {{
+      .toolbar-btn:hover {{
+        background: #E2E8F0;
+        border-color: #000000;
+      }}
+    }}
+    @media (pointer: coarse) {{
+      .toolbar-btn {{
+        min-block-size: 40px;
+      }}
+    }}
+    .toolbar-btn[data-copied] {{
+      background: #ECFDF5;
+      border-color: #047857;
+    }}
+    .toolbar-status {{
+      font-size: 0.76rem;
+      font-weight: 700;
+      color: #000000;
+      min-height: 1.1em;
+      opacity: 0;
+      transition: opacity 0.15s ease;
+    }}
+    .toolbar-status[data-active] {{
+      opacity: 1;
+    }}
+    .sr-snippet {{
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }}
     .planner-bar {{
       display: flex;
       flex-wrap: wrap;
@@ -441,8 +535,15 @@ class RouteMapView(View):
         </svg>
         <span>Fuel Route Optimizer</span>
       </div>
-      <div class="route-title">
-        {esc_start} &rarr; {esc_dest} ({route.distance_miles:.1f} miles)
+      <div class="header-right">
+        <div class="route-title">
+          {esc_start} &rarr; {esc_dest} ({route.distance_miles:.1f} miles)
+        </div>
+        <nav class="header-nav" aria-label="Platform navigation">
+          <a href="/api/docs/" class="nav-link">API Docs</a>
+          <a href="/api/v1/sre/dashboard/" class="nav-link">SRE &amp; SLA Console</a>
+          <a href="/api/v1/stations/?limit=25&amp;ordering=retail_price" class="nav-link">Fuel Stations JSON</a>
+        </nav>
       </div>
     </div>
 
@@ -517,6 +618,28 @@ class RouteMapView(View):
         </div>
       </div>
 
+      <div class="toolbar-wrap">
+        <div id="route-action-toolbar" role="toolbar" focusgroup="toolbar wrap" aria-label="Trip sheet export and sharing actions">
+          <div role="group" aria-label="Export and share">
+            <button id="download-trip-csv-btn" type="button" class="toolbar-btn" title="Download driver trip sheet as CSV">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 12l-4-4h2.5V2h3v6H12L8 12zm-6 2h12v1.5H2V14z"/></svg>
+              Download Trip Sheet (CSV)
+            </button>
+            <button id="copy-share-link-btn" type="button" class="toolbar-btn copy-button" command="--copy" commandfor="share-url-snippet" title="Copy shareable route map link">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M4 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V2zm2 0v8h8V2H6zM2 6a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2v-1H8v1H2V8h1V6H2z"/></svg>
+              Copy Map Link
+            </button>
+            <button id="copy-curl-btn" type="button" class="toolbar-btn copy-button" command="--copy" commandfor="curl-command-snippet" title="Copy cURL API command for this route">
+              <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M2 3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3zm2 2v1.5l2.5 1.5L4 9.5V11l4-2.5v-1L4 5zm4.5 5H12V8.5H8.5V10z"/></svg>
+              Copy API Command
+            </button>
+          </div>
+        </div>
+        <p id="toolbar-status" role="status" class="toolbar-status"></p>
+        <input id="share-url-snippet" type="text" readonly value="" class="sr-snippet" tabindex="-1" aria-hidden="true">
+        <input id="curl-command-snippet" type="text" readonly value="" class="sr-snippet" tabindex="-1" aria-hidden="true">
+      </div>
+
       <div id="cheapest-station-container"></div>
 
       <div id="price-chart-card" class="chart-card" style="display: none;">
@@ -537,6 +660,191 @@ class RouteMapView(View):
     const stopsData = {json.dumps(stops_json)};
     const cheapestStation = {json.dumps(cheapest_json)};
     const bbox = {json.dumps(list(route.bbox))};
+    const tripSummary = {{
+      origin: {json.dumps(origin.resolved_name)},
+      destination: {json.dumps(dest.resolved_name)},
+      distance_miles: {json.dumps(round(route.distance_miles, 2))},
+      total_fuel_cost_usd: {json.dumps(str(plan.total_money_spent_on_fuel_usd))},
+      pump_spend_usd: {json.dumps(str(plan.en_route_pump_cost_usd))},
+      vehicle_range_miles: {json.dumps(spec.max_range_miles)},
+      mpg: {json.dumps(spec.mpg)},
+      initial_fuel_gallons: {json.dumps(spec.initial_fuel_gallons)}
+    }};
+
+    // Populate shareable URL and cURL API command snippets
+    const shareUrlInput = document.getElementById('share-url-snippet');
+    const curlSnippetInput = document.getElementById('curl-command-snippet');
+    if (shareUrlInput) {{
+      shareUrlInput.value = window.location.href;
+    }}
+    if (curlSnippetInput) {{
+      const apiOrigin = window.location.origin || 'http://127.0.0.1:8000';
+      const payload = JSON.stringify({{
+        start: tripSummary.origin,
+        finish: tripSummary.destination,
+        vehicle_range_miles: tripSummary.vehicle_range_miles,
+        mpg: tripSummary.mpg,
+        initial_fuel_gallons: tripSummary.initial_fuel_gallons
+      }});
+      curlSnippetInput.value = `curl -s -X POST "${{apiOrigin}}/api/v1/route/" -H "Content-Type: application/json" -d '${{payload}}'`;
+    }}
+
+    // Accessible status announcer outside toolbar (with VoiceOver repeat guard)
+    const toolbarStatus = document.getElementById('toolbar-status');
+    let lastStatusMessage = '';
+    let statusTimer = null;
+    function announceToolbarStatus(msg) {{
+      if (!toolbarStatus) return;
+      clearTimeout(statusTimer);
+      let message = msg;
+      if (message === lastStatusMessage) message += '\\u00A0';
+      lastStatusMessage = message;
+      toolbarStatus.removeAttribute('data-active');
+      toolbarStatus.textContent = '';
+      requestAnimationFrame(() => {{
+        toolbarStatus.textContent = message;
+        toolbarStatus.setAttribute('data-active', '');
+      }});
+      statusTimer = setTimeout(() => {{
+        toolbarStatus.removeAttribute('data-active');
+        toolbarStatus.textContent = '';
+      }}, 2500);
+    }}
+
+    // Roving-tabindex fallback for role="toolbar" when native focusgroup is unsupported
+    const actionToolbar = document.getElementById('route-action-toolbar');
+    if (actionToolbar && !('focusGroup' in HTMLElement.prototype)) {{
+      const items = Array.from(actionToolbar.querySelectorAll('button'));
+      items.forEach((b, i) => (b.tabIndex = i ? -1 : 0));
+      actionToolbar.addEventListener('focusin', ({{ target }}) => {{
+        if (items.includes(target)) items.forEach((b) => (b.tabIndex = b === target ? 0 : -1));
+      }});
+      actionToolbar.addEventListener('keydown', (e) => {{
+        const idx = items.indexOf(document.activeElement);
+        if (idx < 0) return;
+        const rtl = getComputedStyle(actionToolbar).direction === 'rtl';
+        const steps = {{ ArrowRight: rtl ? -1 : 1, ArrowLeft: rtl ? 1 : -1 }};
+        if (e.key in steps) {{
+          e.preventDefault();
+          items[(idx + steps[e.key] + items.length) % items.length].focus();
+        }} else if (e.key === 'Home') {{
+          e.preventDefault();
+          items[0].focus();
+        }} else if (e.key === 'End') {{
+          e.preventDefault();
+          items[items.length - 1].focus();
+        }}
+      }});
+    }}
+
+    // Copy logic supporting Invoker Commands (`command="--copy"`) and fallback
+    function legacyCopy(text) {{
+      const field = Object.assign(document.createElement('textarea'), {{ value: text }});
+      field.setAttribute('readonly', '');
+      field.style.cssText = 'position:fixed;inset-block-start:0;opacity:0';
+      document.body.appendChild(field);
+      field.select();
+      try {{ return document.execCommand('copy'); }} finally {{ field.remove(); }}
+    }}
+
+    const copyTimers = new WeakMap();
+    async function handleCopyButton(button, targetEl) {{
+      if (!button || !targetEl) return;
+      const text = targetEl.matches('input, textarea') ? targetEl.value : targetEl.innerText.trim();
+      if (!text) return;
+      let ok = true;
+      try {{
+        await navigator.clipboard.writeText(text);
+      }} catch {{
+        ok = legacyCopy(text);
+      }}
+      clearTimeout(copyTimers.get(button));
+      button.removeAttribute('data-copied');
+      if (ok) {{
+        button.setAttribute('data-copied', '');
+        const label = button.id === 'copy-curl-btn' ? 'API command copied to clipboard' : 'Shareable map link copied';
+        announceToolbarStatus(label);
+      }} else {{
+        announceToolbarStatus('Copy failed');
+      }}
+      copyTimers.set(button, setTimeout(() => {{
+        button.removeAttribute('data-copied');
+      }}, 2000));
+    }}
+
+    if ('CommandEvent' in window) {{
+      document.addEventListener('command', (event) => {{
+        if (event.command && event.command.startsWith('--copy')) {{
+          handleCopyButton(event.source, event.target);
+        }}
+      }}, true);
+    }} else {{
+      document.addEventListener('click', (event) => {{
+        const button = event.target.closest('button[command^="--copy"]');
+        if (!button) return;
+        const target = document.getElementById(button.getAttribute('commandfor'));
+        if (target) handleCopyButton(button, target);
+      }});
+    }}
+
+    // 1-Click Driver Trip Sheet CSV Export
+    const csvBtn = document.getElementById('download-trip-csv-btn');
+    if (csvBtn) {{
+      csvBtn.addEventListener('click', () => {{
+        const escCsv = (val) => `"${{String(val ?? '').replace(/"/g, '""')}}"`;
+        const headers = [
+          'Stop Number', 'Truckstop Name', 'Address', 'City', 'State',
+          'Latitude', 'Longitude', 'Route Mile Marker', 'Retail Price USD/Gal',
+          'Gallons Purchased', 'Stop Cost USD', 'Tank Before Gal', 'Tank After Gal'
+        ];
+        const rows = [headers.map(escCsv).join(',')];
+        if (stopsData.length === 0) {{
+          rows.push([
+            '0 (Direct Trip - No Stops Required)',
+            cheapestStation ? cheapestStation.name : 'N/A',
+            cheapestStation ? cheapestStation.address : '',
+            cheapestStation ? cheapestStation.city : '',
+            cheapestStation ? cheapestStation.state : '',
+            cheapestStation ? cheapestStation.lat : '',
+            cheapestStation ? cheapestStation.lon : '',
+            tripSummary.distance_miles,
+            cheapestStation ? cheapestStation.price : '',
+            '0.00',
+            '0.00',
+            tripSummary.initial_fuel_gallons,
+            ''
+          ].map(escCsv).join(','));
+        }} else {{
+          stopsData.forEach((s) => {{
+            rows.push([
+              s.stop_number, s.name, s.address, s.city, s.state,
+              s.lat, s.lon, s.mile, s.price, s.gallons, s.cost,
+              s.tank_before, s.tank_after
+            ].map(escCsv).join(','));
+          }});
+        }}
+        rows.push([
+          'TOTAL SUMMARY',
+          `${{tripSummary.origin}} -> ${{tripSummary.destination}}`,
+          '', '', '', '', '',
+          tripSummary.distance_miles,
+          '', '',
+          tripSummary.total_fuel_cost_usd,
+          '', ''
+        ].map(escCsv).join(','));
+        const blob = new Blob([rows.join('\\r\\n')], {{ type: 'text/csv;charset=utf-8;' }});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const slug = `${{tripSummary.origin}}-to-${{tripSummary.destination}}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        a.href = url;
+        a.download = `trip-sheet-${{slug || 'route'}}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        announceToolbarStatus('Trip sheet CSV downloaded');
+      }});
+    }}
 
     // Wire 1-click corridor preset buttons
     document.querySelectorAll('.corridor-chip').forEach((btn) => {{

@@ -202,6 +202,11 @@ def test_route_map_html_view() -> None:
     assert "Popular US Freight Corridors:" in content
     assert "Stop-by-Stop Fuel Price &amp; Tank Profile" in content
     assert 'id="route-planner-form"' in content
+    assert 'role="toolbar" focusgroup="toolbar wrap"' in content
+    assert 'id="download-trip-csv-btn"' in content
+    assert 'id="copy-share-link-btn"' in content
+    assert 'id="copy-curl-btn"' in content
+    assert 'aria-label="Platform navigation"' in content
     # High-contrast CSS text assertion
     assert "--text: #000000;" in content
 

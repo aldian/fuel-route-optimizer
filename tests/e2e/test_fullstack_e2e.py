@@ -5,15 +5,44 @@ real concurrency, and full visual map generation.
 """
 import asyncio
 from decimal import Decimal
+import os
+from pathlib import Path
 import httpx
 import pytest
 import respx
+from django.conf import settings
 from django.core.management import call_command
 from apps.routing.models import USPlaceGazetteer
 from apps.routing.providers.polyline_codec import encode_polyline
 from apps.routing.resolver import USLocationResolver
 from apps.stations.models import FuelStation
 from apps.stations.spatial import StationSpatialIndex
+
+
+@pytest.fixture(autouse=True)
+def preserve_live_deployment_files():
+    """Back up and restore any live .env.production or terraform.tfvars during E2E tests."""
+    protected_paths = [
+        settings.BASE_DIR / ".env.production",
+        settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json",
+        settings.BASE_DIR / "deploy" / "generated" / "set_github_secrets.sh",
+        settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml",
+        settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp-gke" / "terraform.tfvars",
+    ]
+    backups: dict[Path, tuple[bytes, int]] = {}
+    for p in protected_paths:
+        if p.exists():
+            backups[p] = (p.read_bytes(), p.stat().st_mode & 0o777)
+    yield
+    for p in protected_paths:
+        if p in backups:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(backups[p][0])
+            os.chmod(p, backups[p][1])
+        elif p.exists():
+            p.unlink()
 
 
 @pytest.fixture(autouse=True)

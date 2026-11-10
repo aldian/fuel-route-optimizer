@@ -241,6 +241,11 @@ flowchart LR
    - Includes an accessible `<search><form id="route-planner-form">` allowing users to change **Start Location**, **Destination**, **Max Range (mi)**, **Efficiency (MPG)**, and **Start Fuel (gal)** directly in the browser without returning to Postman.
    - Provides 1-click **Popular US Freight Corridors** preset chips (`I-80: NY -> LA`, `I-10: Jacksonville -> El Paso`, `I-90: Seattle -> Boston`, `I-35: Laredo -> Duluth`, `Short Haul: Chicago -> Indy`).
    - Renders an interactive **SVG Stop-by-Stop Fuel Price & Tank Profile** bar chart (`$/gal` color-coded for lowest vs. standard stops, plus arrival/departure fuel tank gallon bars) and a clickable **Lowest-Price Corridor Station** highlight card that pans and opens the station popup on the Leaflet map.
+7. **Accessible Route Action Toolbar, Driver Trip Sheet CSV Export & Quick Platform Navigation**:
+   - Provides a `role="toolbar"` (`focusgroup="toolbar wrap"` with roving-tabindex fallback) containing:
+     - **Download Trip Sheet (CSV)** (`#download-trip-csv-btn`): Generates and downloads a driver-ready CSV dispatch sheet (`Stop Number, Truckstop Name, Address, City, State, Latitude, Longitude, Route Mile Marker, Retail Price USD/Gal, Gallons Purchased, Stop Cost USD, Tank Before Gal, Tank After Gal`).
+     - **Copy Map Link** (`#copy-share-link-btn`) and **Copy API Command** (`#copy-curl-btn`): Uses Invoker Commands (`command="--copy"` + `commandfor`) and the Async Clipboard API with a live `role="status"` confirmation region outside the toolbar.
+   - Includes a `<nav aria-label="Platform navigation">` in the header linking directly to `/api/docs/`, `/api/v1/sre/dashboard/`, and `/api/v1/stations/`.
 
 ---
 
