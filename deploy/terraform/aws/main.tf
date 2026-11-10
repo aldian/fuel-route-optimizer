@@ -135,7 +135,7 @@ resource "aws_apprunner_service" "app" {
     interval            = 10
     timeout             = 5
     healthy_threshold   = 1
-    unhealthy_threshold = 3
+    unhealthy_threshold = 10
   }
 }
 

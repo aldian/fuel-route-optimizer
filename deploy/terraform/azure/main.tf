@@ -166,6 +166,32 @@ resource "azurerm_container_app" "app" {
         name  = "REDIS_URL"
         value = local.effective_redis_url
       }
+
+      startup_probe {
+        transport               = "HTTP"
+        port                    = 8000
+        path                    = "/api/v1/health/"
+        initial_delay           = 5
+        interval_seconds        = 5
+        timeout                 = 5
+        failure_count_threshold = 36
+      }
+
+      liveness_probe {
+        transport        = "HTTP"
+        port             = 8000
+        path             = "/api/v1/health/"
+        interval_seconds = 15
+        timeout          = 5
+      }
+
+      readiness_probe {
+        transport        = "HTTP"
+        port             = 8000
+        path             = "/api/v1/health/"
+        interval_seconds = 10
+        timeout          = 5
+      }
     }
   }
 

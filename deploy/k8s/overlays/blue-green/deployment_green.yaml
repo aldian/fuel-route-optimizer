@@ -24,11 +24,27 @@ spec:
           ports:
             - containerPort: 8000
               name: http
+          env:
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
           envFrom:
             - secretRef:
                 name: fuel-optimizer-secrets
             - configMapRef:
                 name: fuel-optimizer-config
+          startupProbe:
+            httpGet:
+              path: /api/v1/health/
+              port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 36
           readinessProbe:
             httpGet:
               path: /api/v1/health/

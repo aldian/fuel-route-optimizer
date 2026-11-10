@@ -4,12 +4,15 @@ services:
     runtime: docker
     plan: standard
     region: ohio
-    dockerfilePath: Dockerfile
+    dockerfilePath: ./Dockerfile
     healthCheckPath: /api/v1/health/
     envVars:
+      - key: PORT
+        value: "8000"
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: ALLOWED_HOSTS
-        value: "*"
+        value: ".onrender.com,localhost,127.0.0.1"
+

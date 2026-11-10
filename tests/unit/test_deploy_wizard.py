@@ -526,4 +526,58 @@ def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratc
     assert not k8s_deploy_script.exists()
 
 
+def test_paas_kustomize_and_terraform_manifests_validation() -> None:
+    import shutil
+    import subprocess
+    import tomllib
+
+    # 1. Validate Managed PaaS manifests (fly.toml, render.yaml, railway.json)
+    fly_path = settings.BASE_DIR / "fly.toml"
+    fly_data = tomllib.loads(fly_path.read_text(encoding="utf-8"))
+    assert fly_data["app"] == "fuel-route-optimizer"
+    assert fly_data["http_service"]["internal_port"] == 8000
+    assert fly_data["http_service"]["checks"][0]["path"] == "/api/v1/health/"
+    assert ".fly.dev" in fly_data["env"]["ALLOWED_HOSTS"]
+
+    render_text = (settings.BASE_DIR / "render.yaml").read_text(encoding="utf-8")
+    assert "healthCheckPath: /api/v1/health/" in render_text
+    assert ".onrender.com" in render_text
+
+    railway_data = json.loads((settings.BASE_DIR / "railway.json").read_text(encoding="utf-8"))
+    assert railway_data["deploy"]["healthcheckPath"] == "/api/v1/health/"
+    assert railway_data["deploy"]["healthcheckTimeout"] >= 60
+
+    # 2. Validate Docker Compose production stack manifest
+    compose_text = (settings.BASE_DIR / "docker-compose.prod.yml").read_text(encoding="utf-8")
+    assert "http://127.0.0.1:8000/api/v1/health/" in compose_text
+    assert "POSTGRES_DB:-spotter_fuel" in compose_text
+
+    # 3. Validate all Terraform modules contain health checks and production settings
+    for tf_target in ("gcp", "gcp-gke", "aws", "azure"):
+        tf_main = (settings.BASE_DIR / "deploy" / "terraform" / tf_target / "main.tf").read_text(encoding="utf-8")
+        assert "fuel-route-optimizer" in tf_main
+        if tf_target in ("gcp", "aws", "azure"):
+            assert "/api/v1/health/" in tf_main
+            assert "config.settings.production" in tf_main
+
+    # 4. Validate all Kubernetes Kustomize overlays render cleanly via kubectl kustomize
+    if shutil.which("kubectl"):
+        kustomize_dirs = [
+            settings.BASE_DIR / "deploy" / "k8s" / "base",
+            *sorted((settings.BASE_DIR / "deploy" / "k8s" / "overlays").iterdir()),
+        ]
+        for kdir in kustomize_dirs:
+            if kdir.is_dir():
+                res = subprocess.run(
+                    ["kubectl", "kustomize", str(kdir)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                assert res.returncode == 0, f"kubectl kustomize failed for {kdir}: {res.stderr}"
+                assert "/api/v1/health/" in res.stdout
+                assert "status.podIP" in res.stdout
+
+
+
 
