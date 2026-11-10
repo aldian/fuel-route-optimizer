@@ -168,7 +168,7 @@ def test_fuel_stations_list_view() -> None:
 def test_route_map_html_view() -> None:
     client = APIClient()
 
-    coords = [(40.7128, -74.0060), (34.0522, -118.2437)]
+    coords = [(40.7128, -74.0060), (41.1192, -78.7600), (41.6528, -83.5379), (34.0522, -118.2437)]
     poly = encode_polyline(coords, precision=6)
     respx.get(url__startswith="https://router.project-osrm.org/route/v1/driving/").respond(
         status_code=200,
@@ -182,5 +182,15 @@ def test_route_map_html_view() -> None:
     assert "leaflet.js" in content
     assert "Fuel Route Optimizer" in content
     assert "Trip Overview" in content
+    assert "Popular US Freight Corridors:" in content
+    assert "Stop-by-Stop Fuel Price &amp; Tank Profile" in content
+    assert 'id="route-planner-form"' in content
     # High-contrast CSS text assertion
     assert "--text: #000000;" in content
+
+    # Test invalid numeric query param fallback branches
+    resp_invalid = client.get(
+        "/api/v1/route/map/?start=New+York,+NY&finish=Los+Angeles,+CA"
+        "&vehicle_range_miles=abc&mpg=xyz&initial_fuel_gallons=bad&corridor_miles=bad"
+    )
+    assert resp_invalid.status_code == status.HTTP_200_OK
