@@ -197,7 +197,7 @@ class SREMonitor:
 
         return active_stations, spatial_ready
 
-    def run_synthetic_drill(self, iterations: int = 4) -> dict[str, Any]:
+    def run_synthetic_drill(self, iterations: int = 4, corridor_index: int | None = None) -> dict[str, Any]:
         """
         Execute a multi-corridor synthetic US freight optimization & cache drill.
         Exercises the real 3D cKDTree spatial index, O(K log K) refueling solver,
@@ -232,6 +232,11 @@ class SREMonitor:
                 "miles": 385.0,
                 "coords": [(34.0522, -118.2437), (35.3733, -119.0187), (36.7378, -119.7871), (38.5816, -121.4944)],
             },
+            {
+                "name": "I-10 Southern Corridor (Houston, TX -> San Antonio, TX)",
+                "miles": 197.0,
+                "coords": [(29.7604, -95.3698), (29.7030, -96.5366), (29.6516, -97.6455), (29.4241, -98.4936)],
+            },
         ]
 
         projector = RouteProjector()
@@ -241,10 +246,14 @@ class SREMonitor:
         # Warm SciPy/NumPy thread-local buffers
         projector.project_candidates(corridors[0]["coords"], corridors[0]["miles"], spec)
 
+        if corridor_index is not None and 0 <= corridor_index < len(corridors):
+            selected_corridors = [corridors[corridor_index]]
+        else:
+            count = max(1, min(iterations, len(corridors)))
+            selected_corridors = corridors[:count]
+
         drill_results: list[dict[str, Any]] = []
-        count = max(1, min(iterations, len(corridors)))
-        for i in range(count):
-            corridor = corridors[i]
+        for corridor in selected_corridors:
             # Wave 1: Uncached Spatial + DP Solver execution (1 external routing call equivalent)
             t0 = time.perf_counter()
             candidates = projector.project_candidates(corridor["coords"], corridor["miles"], spec)

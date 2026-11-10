@@ -420,7 +420,11 @@ def test_sre_rest_views_and_check_sla_command(client: object) -> None:
         # 2B. GET /api/v1/sre/dashboard/ & POST /api/v1/sre/probe/
         resp_dash = client.get("/api/v1/sre/dashboard/")
         assert resp_dash.status_code == 200
-        assert "SRE &amp; SLO Observability Console" in resp_dash.content.decode("utf-8")
+        dash_html = resp_dash.content.decode("utf-8")
+        assert "SRE &amp; SLO Observability Console" in dash_html
+        assert "1-Click Corridor Probes:" in dash_html
+        assert 'id="latency-chart-wrap"' in dash_html
+        assert 'id="btn-export-json"' in dash_html
 
         resp_probe = client.post("/api/v1/sre/probe/")
         assert resp_probe.status_code == 200
@@ -429,6 +433,19 @@ def test_sre_rest_views_and_check_sla_command(client: object) -> None:
         assert probe_data["corridors_tested"] == 4
         assert probe_data["requests_generated"] == 12
         assert probe_data["sla_report"]["sla_compliant"] is True
+
+        # Single corridor probe & invalid parameter fallback branches
+        resp_single = client.post("/api/v1/sre/probe/", data={"corridor_index": 2}, format="json")
+        assert resp_single.status_code == 200
+        assert resp_single.json()["corridors_tested"] == 1
+
+        resp_bad_params = client.post(
+            "/api/v1/sre/probe/",
+            data={"corridor_index": "bad", "iterations": "bad"},
+            format="json",
+        )
+        assert resp_bad_params.status_code == 200
+        assert resp_bad_params.json()["corridors_tested"] == 4
 
         # 3. CLI check_sla with synthetic probe, --json, and --prometheus
         out_table = io.StringIO()

@@ -69,7 +69,17 @@ class SREProbeDrillView(APIView):
         },
     )
     def post(self, request: Request) -> Response:
-        drill_output = sre_monitor.run_synthetic_drill(iterations=4)
+        corridor_idx = request.data.get("corridor_index") if isinstance(request.data, dict) else None
+        iterations = request.data.get("iterations", 4) if isinstance(request.data, dict) else 4
+        try:
+            c_idx = int(corridor_idx) if corridor_idx is not None else None
+        except (TypeError, ValueError):
+            c_idx = None
+        try:
+            iters = int(iterations)
+        except (TypeError, ValueError):
+            iters = 4
+        drill_output = sre_monitor.run_synthetic_drill(iterations=iters, corridor_index=c_idx)
         return Response(drill_output, status=status.HTTP_200_OK)
 
 
@@ -193,6 +203,45 @@ class SREDashboardView(APIView):
       border-color: var(--border);
     }}
     .btn-outline:hover {{ background: #f1f5f9; }}
+    .btn:focus-visible, .corridor-probe-chip:focus-visible {{
+      outline: 3px solid var(--primary);
+      outline-offset: 2px;
+    }}
+    .corridor-probe-bar {{
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 18px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 16px;
+    }}
+    .corridor-probe-label {{
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-right: 4px;
+    }}
+    .corridor-probe-chip {{
+      font: inherit;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text);
+      background: #f1f5f9;
+      border: 1px solid #64748b;
+      border-radius: 999px;
+      padding: 4px 12px;
+      cursor: pointer;
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }}
+    .corridor-probe-chip:hover {{
+      background: #e2e8f0;
+      border-color: var(--text);
+    }}
     main {{
       max-width: 1680px;
       margin: 24px auto;
@@ -353,11 +402,14 @@ class SREDashboardView(APIView):
       </div>
     </div>
     <div class="actions">
-      <button id="btn-run-drill" class="btn" type="button" onclick="runLiveDrill()">
-        ▶ Run Live US Corridor Load &amp; Cache Drill (12 Requests)
+      <button id="btn-run-drill" class="btn" type="button">
+        ▶ Run Live US Corridor Load &amp; Cache Drill (15 Probes)
       </button>
-      <button id="btn-refresh-sre" class="btn btn-outline" type="button" onclick="refreshTelemetry()">
+      <button id="btn-refresh-sre" class="btn btn-outline" type="button">
         ↻ Refresh Telemetry
+      </button>
+      <button id="btn-export-json" class="btn btn-outline" type="button">
+        ⬇ Export SLA Audit JSON
       </button>
       <a class="btn btn-outline" href="/api/docs/">OpenAPI Docs</a>
       <a class="btn btn-outline" href="/api/v1/route/map/?start=New+York,+NY&amp;finish=Los+Angeles,+CA">Route Map</a>
@@ -365,6 +417,15 @@ class SREDashboardView(APIView):
   </header>
 
   <main>
+    <div class="corridor-probe-bar" role="group" aria-label="Synthetic US Freight Corridor Probes">
+      <span class="corridor-probe-label">1-Click Corridor Probes:</span>
+      <button type="button" class="corridor-probe-chip" data-corridor-index="0">Probe I-95 (NY &rarr; DC)</button>
+      <button type="button" class="corridor-probe-chip" data-corridor-index="1">Probe I-35 (Austin &rarr; OKC)</button>
+      <button type="button" class="corridor-probe-chip" data-corridor-index="2">Probe I-80 (Chicago &rarr; Des Moines)</button>
+      <button type="button" class="corridor-probe-chip" data-corridor-index="3">Probe I-5 (LA &rarr; Sacramento)</button>
+      <button type="button" class="corridor-probe-chip" data-corridor-index="4">Probe I-10 (Houston &rarr; San Antonio)</button>
+    </div>
+
     <div class="kpi-grid">
       <div class="card">
         <div class="kpi-label">Overall SLA Compliance</div>
@@ -396,6 +457,14 @@ class SREDashboardView(APIView):
       <span id="drill-status-banner" style="font-size:13px;font-weight:700;color:#0284c7;">Ready</span>
     </h2>
     <div id="slo-grid" class="slo-grid"></div>
+
+    <div class="card" style="margin-bottom: 24px;">
+      <h3 class="section-title">
+        <span>Real-Time Latency Percentiles (P50 / P95 / P99) vs. Authoritative SLA Ceilings</span>
+        <span style="font-size:12px;color:var(--text-muted);">Measured across Redis-shared sliding window</span>
+      </h3>
+      <div id="latency-chart-wrap"></div>
+    </div>
 
     <div class="bottom-grid">
       <div class="card">
@@ -438,8 +507,80 @@ class SREDashboardView(APIView):
   <script>
     const initialReport = {report_json};
     const initialProm = {prom_json};
+    let latestReport = initialReport;
+
+    function renderLatencyChart(tel) {{
+      const comp = tel.compute_latency_ms || {{}};
+      const cached = tel.cached_e2e_latency_ms || {{}};
+      const uncached = tel.uncached_e2e_latency_ms || {{}};
+      const rows = [
+        {{
+          label: 'Internal 3D cKDTree + DP Compute (SLO-LAT-01 < 15.0 ms P99)',
+          p50: Number(comp.p50 || 0),
+          p95: Number(comp.p95 || 0),
+          p99: Number(comp.p99 || 0),
+          sla: 15.0,
+          activeMetric: Number(comp.p99 || 0),
+          samples: Number(comp.samples || 0),
+        }},
+        {{
+          label: 'Cached End-to-End Route Response (SLO-LAT-02 < 20.0 ms P95)',
+          p50: Number(cached.p50 || 0),
+          p95: Number(cached.p95 || 0),
+          p99: Number(cached.p99 || 0),
+          sla: 20.0,
+          activeMetric: Number(cached.p95 || 0),
+          samples: Number(cached.samples || 0),
+        }},
+        {{
+          label: 'Uncached End-to-End Route Response (SLO-LAT-03 < 350.0 ms P95)',
+          p50: Number(uncached.p50 || 0),
+          p95: Number(uncached.p95 || 0),
+          p99: Number(uncached.p99 || 0),
+          sla: 350.0,
+          activeMetric: Number(uncached.p95 || 0),
+          samples: Number(uncached.samples || 0),
+        }},
+      ];
+
+      const svgW = 920;
+      const svgH = 158;
+      const barX = 395;
+      const maxBarW = 360;
+      let rowsSvg = '';
+      rows.forEach((r, idx) => {{
+        const y = 18 + idx * 48;
+        const p50W = Math.min(maxBarW, Math.max(4, Math.round((r.p50 / r.sla) * maxBarW)));
+        const p95W = Math.min(maxBarW, Math.max(6, Math.round((r.p95 / r.sla) * maxBarW)));
+        const p99W = Math.min(maxBarW, Math.max(8, Math.round((r.p99 / r.sla) * maxBarW)));
+        const ok = r.activeMetric < r.sla;
+        const barColor = ok ? '#0284c7' : '#dc2626';
+        rowsSvg += `
+          <g>
+            <text x="4" y="${{y + 14}}" font-size="12" font-weight="800" fill="#0f172a">${{r.label}}</text>
+            <text x="4" y="${{y + 30}}" font-size="11" font-weight="600" fill="#334155">Samples: n=${{r.samples}} • P50: ${{r.p50.toFixed(2)}} ms • P95: ${{r.p95.toFixed(2)}} ms • P99: ${{r.p99.toFixed(2)}} ms</text>
+            <rect x="${{barX}}" y="${{y + 4}}" width="${{maxBarW}}" height="22" rx="5" fill="#e2e8f0" />
+            <rect x="${{barX}}" y="${{y + 4}}" width="${{p99W}}" height="22" rx="5" fill="#93c5fd" />
+            <rect x="${{barX}}" y="${{y + 4}}" width="${{p95W}}" height="22" rx="5" fill="${{barColor}}" />
+            <rect x="${{barX}}" y="${{y + 4}}" width="${{p50W}}" height="22" rx="5" fill="#0369a1" />
+            <line x1="${{barX + maxBarW}}" y1="${{y + 1}}" x2="${{barX + maxBarW}}" y2="${{y + 29}}" stroke="#16a34a" stroke-width="2.5" />
+            <text x="${{barX + maxBarW + 10}}" y="${{y + 19}}" font-size="11" font-weight="800" fill="#0f172a">${{r.activeMetric.toFixed(2)}} / ${{r.sla.toFixed(1)}} ms SLA</text>
+          </g>
+        `;
+      }});
+
+      const wrap = document.getElementById('latency-chart-wrap');
+      if (wrap) {{
+        wrap.innerHTML = `
+          <svg viewBox="0 0 ${{svgW}} ${{svgH}}" width="100%" height="${{svgH}}" role="img" aria-label="Latency percentiles compared against SLA ceilings">
+            ${{rowsSvg}}
+          </svg>
+        `;
+      }}
+    }}
 
     function renderReport(report, promText) {{
+      latestReport = report;
       const isOk = Boolean(report.sla_compliant);
       const statusEl = document.getElementById('kpi-status');
       statusEl.textContent = isOk ? '✓ ' + report.overall_status : '✗ ' + report.overall_status;
@@ -488,6 +629,7 @@ class SREDashboardView(APIView):
       if (promText) {{
         document.getElementById('prom-box').textContent = promText;
       }}
+      renderLatencyChart(tel);
     }}
 
     async function refreshTelemetry() {{
@@ -500,13 +642,20 @@ class SREDashboardView(APIView):
       renderReport(report, promText);
     }}
 
-    async function runLiveDrill() {{
+    async function runLiveDrill(corridorIndex = null) {{
       const btn = document.getElementById('btn-run-drill');
       const banner = document.getElementById('drill-status-banner');
       btn.disabled = true;
-      banner.textContent = 'Running 12 multi-corridor optimization & cache probes...';
+      const payload = corridorIndex !== null ? {{ corridor_index: corridorIndex }} : {{ iterations: 5 }};
+      banner.textContent = corridorIndex !== null
+        ? `Running synthetic probe on corridor #${{corridorIndex + 1}}...`
+        : 'Running 15 multi-corridor optimization & cache probes across 5 US interstates...';
       try {{
-        const resp = await fetch('/api/v1/sre/probe/', {{ method: 'POST' }});
+        const resp = await fetch('/api/v1/sre/probe/', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify(payload),
+        }});
         const data = await resp.json();
         const promResp = await fetch('/api/v1/sre/metrics/');
         const promText = await promResp.text();
@@ -528,11 +677,33 @@ class SREDashboardView(APIView):
         }});
 
         renderReport(data.sla_report, promText);
-        banner.textContent = `✓ Drill Completed: ${{data.requests_generated}} probes across ${{data.corridors_tested}} US corridors — All 6 SLOs MEETING_SLA`;
+        banner.textContent = `✓ Drill Completed: ${{data.requests_generated}} probes across ${{data.corridors_tested}} US corridor(s) — All 6 SLOs MEETING_SLA`;
       }} finally {{
         btn.disabled = false;
       }}
     }}
+
+    function exportSlaJson() {{
+      const blob = new Blob([JSON.stringify(latestReport, null, 2)], {{ type: 'application/json' }});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'spotter-sla-compliance-report.json';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }}
+
+    document.getElementById('btn-run-drill').addEventListener('click', () => runLiveDrill(null));
+    document.getElementById('btn-refresh-sre').addEventListener('click', () => refreshTelemetry());
+    document.getElementById('btn-export-json').addEventListener('click', () => exportSlaJson());
+    document.querySelectorAll('.corridor-probe-chip').forEach((chip) => {{
+      chip.addEventListener('click', () => {{
+        const idx = parseInt(chip.getAttribute('data-corridor-index'), 10);
+        runLiveDrill(idx);
+      }});
+    }});
 
     renderReport(initialReport, initialProm);
   </script>
