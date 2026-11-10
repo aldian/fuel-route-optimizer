@@ -478,3 +478,34 @@ def test_sre_rest_views_and_check_sla_command(client: object) -> None:
             )
         assert "[SRE AUTO-ROLLBACK]" in out_breach.getvalue()
         sre_monitor.reset()
+
+        # 6. Verify local-only SREMonitor (use_shared_cache=False) and cache failure fallback
+        from apps.common.sre import SREMonitor
+        local_mon = SREMonitor(use_shared_cache=False)
+        empty_report = local_mon.evaluate_sla()
+        assert empty_report["error_budget"]["observed_availability_pct"] == 100.0
+        local_mon.record_request(
+            compute_time_ms=2.0,
+            total_latency_ms=10.0,
+            cache_hit=False,
+            external_calls=1,
+            status_code=200,
+        )
+        assert local_mon.evaluate_sla()["telemetry"]["total_requests"] == 1
+        local_mon.reset()
+
+        with (
+            patch("django.core.cache.cache.get", side_effect=RuntimeError("redis error")),
+            patch("django.core.cache.cache.set", side_effect=RuntimeError("redis error")),
+            patch("django.core.cache.cache.delete", side_effect=RuntimeError("redis error")),
+        ):
+            sre_monitor.record_request(
+                compute_time_ms=2.5,
+                total_latency_ms=8.0,
+                cache_hit=True,
+                external_calls=0,
+                status_code=200,
+            )
+            assert sre_monitor.evaluate_sla()["telemetry"]["total_requests"] >= 1
+            sre_monitor.reset()
+

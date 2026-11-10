@@ -49,7 +49,10 @@ class HealthView(APIView):
 
         try:
             from apps.stations.spatial import StationSpatialIndex
-            spatial_ready = StationSpatialIndex.get_instance().is_initialized()
+            idx = StationSpatialIndex.get_instance()
+            if not idx.is_initialized() and active_stations_count > 0:
+                idx.ensure_initialized()
+            spatial_ready = idx.is_initialized()
         except Exception:
             pass
 

@@ -1,5 +1,6 @@
 """Production settings profile."""
 import os
+import socket
 from .base import *  # noqa: F403
 
 DEBUG = False
@@ -14,6 +15,16 @@ ALLOWED_HOSTS = [
 
 if not ALLOWED_HOSTS:
     raise ValueError("ALLOWED_HOSTS environment variable must be specified in production.")
+
+# Allow Kubernetes kubelet / Cloud Load Balancer health probes that send the Pod's private IP in Host header
+try:
+    _pod_ip = socket.gethostbyname(socket.gethostname())
+except OSError:
+    _pod_ip = ""
+
+for _extra_host in (os.environ.get("POD_IP", "").strip(), _pod_ip):
+    if _extra_host and _extra_host not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_extra_host)
 
 # Security Hardening
 SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"

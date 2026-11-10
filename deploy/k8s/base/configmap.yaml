@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fuel-optimizer-config
+  labels:
+    app.kubernetes.io/name: fuel-route-optimizer
+data:
+  DJANGO_SETTINGS_MODULE: "config.settings.production"
+  ALLOWED_HOSTS: "localhost,127.0.0.1,api.fuel-optimizer.example.com,staging-api.fuel-optimizer.example.com,fuel-route-optimizer"
+  SECURE_SSL_REDIRECT: "False"
+  SECURE_HSTS_SECONDS: "31536000"
+  EXTERNAL_CONNECT_TIMEOUT_SEC: "2.0"
+  EXTERNAL_READ_TIMEOUT_SEC: "4.0"

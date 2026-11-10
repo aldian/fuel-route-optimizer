@@ -509,9 +509,36 @@ class Command(BaseCommand):
         with open(state_path, "w", encoding="utf-8") as f:
             json.dump(state_payload, f, indent=2)
 
-        if target == "k8s" and domain != "auto":
-            self._patch_k8s_domains(domain, staging_domain)
-            self.stdout.write(self.style.SUCCESS("[2.5/3] Patched Kubernetes Ingress & Certificate manifests with domain."))
+        if target == "k8s":
+            k8s_secrets_path = deploy_dir / "k8s-secrets.yaml"
+            k8s_secrets_content = self._render_k8s_secrets_manifest(
+                secret_key=secret_key,
+                allowed_hosts=allowed_hosts,
+                database_url=database_url,
+                redis_url=redis_url,
+                db_password=db_password or "spotter-k8s-db-password",
+                domain=domain,
+            )
+            with open(k8s_secrets_path, "w", encoding="utf-8") as f:
+                f.write(k8s_secrets_content)
+            os.chmod(k8s_secrets_path, 0o600)
+
+            k8s_deploy_script_path = deploy_dir / "deploy_k8s.sh"
+            k8s_deploy_script_content = self._render_k8s_deploy_script(k8s_provider=k8s_provider)
+            with open(k8s_deploy_script_path, "w", encoding="utf-8") as f:
+                f.write(k8s_deploy_script_content)
+            os.chmod(k8s_deploy_script_path, 0o755)
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"[2.2/3] Generated Kubernetes Secret manifest ({k8s_secrets_path}, mode 0600) "
+                    f"and deploy script ({k8s_deploy_script_path})."
+                )
+            )
+            if domain != "auto":
+                self._patch_k8s_domains(domain, staging_domain)
+                self.stdout.write(
+                    self.style.SUCCESS("[2.5/3] Patched Kubernetes Ingress & Certificate manifests with domain.")
+                )
 
         if dns_provider != "none" and domain not in ("localhost", "127.0.0.1", "auto"):
             tip = dns_target_ip or DNSManager.detect_public_ip() or "127.0.0.1"
@@ -550,11 +577,15 @@ class Command(BaseCommand):
             domain, staging_domain, target, provision_db=provision_db, provision_redis=provision_redis
         )
 
-        deploy_cmd_hint = (
-            f"terraform -chdir=deploy/terraform/{target} init && terraform -chdir=deploy/terraform/{target} apply"
-            if target in ("gcp", "aws", "azure")
-            else "docker compose -f docker-compose.prod.yml up -d"
-        )
+        if target in ("gcp", "aws", "azure"):
+            deploy_cmd_hint = f"terraform -chdir=deploy/terraform/{target} init && terraform -chdir=deploy/terraform/{target} apply"
+        elif target == "k8s":
+            deploy_cmd_hint = (
+                f"./deploy/generated/deploy_k8s.sh "
+                f"(or: kubectl apply -k deploy/k8s/overlays/{k8s_provider} && kubectl apply -n production -f deploy/generated/k8s-secrets.yaml)"
+            )
+        else:
+            deploy_cmd_hint = "docker compose -f docker-compose.prod.yml up -d"
         workflow_map = {
             "gcp": "cd-gcp.yml",
             "aws": "cd-aws.yml",
@@ -702,6 +733,95 @@ class Command(BaseCommand):
                 f"apiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: fuel-route-optimizer-ingress\n  annotations:\n    kubernetes.io/ingress.class: \"gce\"\n    networking.gke.io/managed-certificates: \"staging-fuel-optimizer-certificate\"\nspec:\n  rules:\n    - host: {staging_domain}\n      http:\n        paths:\n          - path: /*\n            pathType: ImplementationSpecific\n            backend:\n              service:\n                name: fuel-route-optimizer\n                port:\n                  number: 80\n",
                 encoding="utf-8",
             )
+
+        for overlay_name in ("aws-eks", "azure-aks", "generic"):
+            ing_path = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / overlay_name / "ingress_patch.yaml"
+            if ing_path.exists():
+                content = ing_path.read_text(encoding="utf-8")
+                updated = re.sub(r"-\s*host:\s*\S+", f"- host: {domain}", content)
+                ing_path.write_text(updated, encoding="utf-8")
+
+    def _render_k8s_secrets_manifest(
+        self,
+        secret_key: str,
+        allowed_hosts: str,
+        database_url: str,
+        redis_url: str,
+        db_password: str,
+        domain: str,
+    ) -> str:
+        ssl_redirect = "False" if domain in ("localhost", "127.0.0.1", "auto") else "True"
+        hosts_with_svc = f"{allowed_hosts},fuel-route-optimizer"
+        return f"""apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: fuel-optimizer-config
+  namespace: production
+  labels:
+    app.kubernetes.io/name: fuel-route-optimizer
+data:
+  DJANGO_SETTINGS_MODULE: "config.settings.production"
+  ALLOWED_HOSTS: "{hosts_with_svc}"
+  SECURE_SSL_REDIRECT: "{ssl_redirect}"
+  SECURE_HSTS_SECONDS: "31536000"
+  EXTERNAL_CONNECT_TIMEOUT_SEC: "2.0"
+  EXTERNAL_READ_TIMEOUT_SEC: "4.0"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: fuel-optimizer-secrets
+  namespace: production
+  labels:
+    app.kubernetes.io/name: fuel-route-optimizer
+type: Opaque
+stringData:
+  DJANGO_SECRET_KEY: "{secret_key}"
+  POSTGRES_DB: "spotter_fuel"
+  POSTGRES_USER: "spotter"
+  POSTGRES_PASSWORD: "{db_password}"
+  DATABASE_URL: "{database_url}"
+  REDIS_URL: "{redis_url}"
+"""
+
+    def _render_k8s_deploy_script(self, k8s_provider: str) -> str:
+        return f"""#!/usr/bin/env bash
+# Generated by manage.py deploy_wizard for Kubernetes ({k8s_provider})
+set -e
+
+CTX="$(kubectl config current-context 2>/dev/null || true)"
+echo "Active Kubernetes context: ${{CTX:-unknown}}"
+
+if [[ "$CTX" == *"minikube"* ]] || [[ "$CTX" == *"kind"* ]] || (command -v minikube >/dev/null 2>&1 && minikube profile list 2>/dev/null | grep -q "$CTX"); then
+  echo "=== [0/3] Preparing container image for local Kubernetes cluster ($CTX) ==="
+  if ! docker image inspect ghcr.io/aldian/fuel-route-optimizer:latest >/dev/null 2>&1; then
+    docker build -t ghcr.io/aldian/fuel-route-optimizer:latest .
+  fi
+  if [[ "$CTX" == *"kind"* ]]; then
+    CLUSTER_NAME="${{CTX#kind-}}"
+    kind load docker-image ghcr.io/aldian/fuel-route-optimizer:latest --name "${{CLUSTER_NAME:-kind}}"
+  else
+    minikube image load --overwrite=true ghcr.io/aldian/fuel-route-optimizer:latest -p "$CTX"
+  fi
+fi
+
+echo "=== [1/3] Applying Kustomize overlay: deploy/k8s/overlays/{k8s_provider} ==="
+kubectl apply -k "deploy/k8s/overlays/{k8s_provider}"
+
+echo "=== [2/3] Applying production Secret & ConfigMap ==="
+kubectl apply -n production -f "deploy/generated/k8s-secrets.yaml"
+
+echo "=== [3/3] Waiting for database, Redis, and API rollout in namespace 'production' ==="
+kubectl rollout status statefulset/db -n production --timeout=300s || true
+kubectl rollout status deployment/redis -n production --timeout=120s || true
+kubectl rollout restart deployment/fuel-route-optimizer -n production
+kubectl rollout status deployment/fuel-route-optimizer -n production --timeout=300s
+
+echo ""
+echo "✓ Kubernetes deployment is live in namespace 'production'!"
+echo "  Check pods   : kubectl get pods -n production"
+echo "  Port-forward : kubectl port-forward -n production svc/fuel-route-optimizer 8080:80"
+"""
 
     def _render_env_production(
         self,

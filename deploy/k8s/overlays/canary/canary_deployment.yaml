@@ -33,6 +33,9 @@ spec:
             httpGet:
               path: /api/v1/health/
               port: http
+              httpHeaders:
+                - name: Host
+                  value: localhost
             initialDelaySeconds: 5
             periodSeconds: 5
           resources:

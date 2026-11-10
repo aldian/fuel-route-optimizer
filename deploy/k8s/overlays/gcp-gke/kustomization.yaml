@@ -10,3 +10,8 @@ resources:
 
 patches:
   - path: ingress_patch.yaml
+
+images:
+  - name: ghcr.io/aldian/fuel-route-optimizer
+    newName: us-central1-docker.pkg.dev/aldianfazrihady/fuel-route-optimizer/app
+    newTag: latest

@@ -11,6 +11,31 @@ from apps.stations.dns.base import DNSRecordResult
 from apps.stations.management.commands.deploy_wizard import generate_secure_secret_key
 
 
+@pytest.fixture(autouse=True)
+def preserve_live_deployment_files():
+    """Back up and restore any live .env.production or terraform.tfvars during unit tests."""
+    protected_paths = [
+        settings.BASE_DIR / ".env.production",
+        settings.BASE_DIR / "deploy" / "generated" / "deployment_state.json",
+        settings.BASE_DIR / "deploy" / "generated" / "set_github_secrets.sh",
+        settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml",
+        settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh",
+        settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
+    ]
+    backups: dict[Path, tuple[bytes, int]] = {}
+    for p in protected_paths:
+        if p.exists():
+            backups[p] = (p.read_bytes(), p.stat().st_mode & 0o777)
+    yield
+    for p in protected_paths:
+        if p in backups:
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(backups[p][0])
+            os.chmod(p, backups[p][1])
+        elif p.exists():
+            p.unlink()
+
+
 def test_generate_secure_secret_key() -> None:
     key1 = generate_secure_secret_key()
     key2 = generate_secure_secret_key()
@@ -449,10 +474,32 @@ def test_deploy_wizard_cloud_generated_domain_and_provision_postgres_from_scratc
     with patch("subprocess.run", side_effect=FileNotFoundError("no gcloud")):
         assert DeployWizardCommand()._detect_gcp_project_id() == ""
 
-    # 4. Clean up via destroy_deployment (verifying all terraform.tfvars are also removed)
+    # 4. Verify Kubernetes (k8s) target generates k8s-secrets.yaml and deploy_k8s.sh
+    out_k8s = io.StringIO()
+    call_command(
+        "deploy_wizard",
+        target="k8s",
+        domain="k8s.spotter.example.com",
+        database_url="create",
+        redis_url="create",
+        db_password="k8s-test-db-pass-1234",
+        non_interactive=True,
+        stdout=out_k8s,
+    )
+    k8s_secrets_file = settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml"
+    k8s_deploy_script = settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh"
+    assert k8s_secrets_file.exists()
+    assert k8s_deploy_script.exists()
+    assert "k8s-test-db-pass-1234" in k8s_secrets_file.read_text(encoding="utf-8")
+    assert "kubectl apply -k" in k8s_deploy_script.read_text(encoding="utf-8")
+
+    # 5. Clean up via destroy_deployment (verifying all terraform.tfvars and k8s files are also removed)
     with patch("subprocess.run", return_value=MagicMock(stdout="Destroyed\n", returncode=0)):
         call_command("destroy_deployment", yes=True, stdout=io.StringIO())
     assert not env_path.exists()
     assert not tfvars_path.exists()
+    assert not k8s_secrets_file.exists()
+    assert not k8s_deploy_script.exists()
+
 
 

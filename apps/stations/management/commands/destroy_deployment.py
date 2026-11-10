@@ -384,6 +384,8 @@ class Command(BaseCommand):
         files_to_remove = [
             settings.BASE_DIR / ".env.production",
             settings.BASE_DIR / "deploy" / "generated" / "set_github_secrets.sh",
+            settings.BASE_DIR / "deploy" / "generated" / "k8s-secrets.yaml",
+            settings.BASE_DIR / "deploy" / "generated" / "deploy_k8s.sh",
             state_path,
             settings.BASE_DIR / "deploy" / "terraform" / "gcp" / "terraform.tfvars",
             settings.BASE_DIR / "deploy" / "terraform" / "aws" / "terraform.tfvars",
@@ -412,3 +414,11 @@ class Command(BaseCommand):
                 else:
                     path.write_text(default_content, encoding="utf-8")
                     self.stdout.write(self.style.SUCCESS(f"  ✓ Reset {path.relative_to(settings.BASE_DIR)}"))
+
+        import re
+        for overlay_name in ("aws-eks", "azure-aks", "generic"):
+            ing_path = settings.BASE_DIR / "deploy" / "k8s" / "overlays" / overlay_name / "ingress_patch.yaml"
+            if ing_path.exists() and not dry_run:
+                content = ing_path.read_text(encoding="utf-8")
+                updated = re.sub(r"-\s*host:\s*\S+", "- host: api.fuel-optimizer.example.com", content)
+                ing_path.write_text(updated, encoding="utf-8")

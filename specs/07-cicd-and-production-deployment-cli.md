@@ -186,18 +186,30 @@ Kubernetes deployments use **Kustomize** (`kubectl apply -k deploy/k8s/overlays/
 
 ```mermaid
 flowchart TD
-    Base["deploy/k8s/base/ (Deployment, Service, HPA, PDB, ServiceAccount, ConfigMap)"]
+    Base["deploy/k8s/base/ (Namespace, ConfigMap, Secret, Postgres 16, Redis 7, Deployment, Service, HPA, PDB)"]
 
     Base --> GKE["Overlay 1: deploy/k8s/overlays/gcp-gke/ (Google Kubernetes Engine)"]
     Base --> EKS["Overlay 2: deploy/k8s/overlays/aws-eks/ (AWS Elastic Kubernetes Service)"]
     Base --> AKS["Overlay 3: deploy/k8s/overlays/azure-aks/ (Azure Kubernetes Service)"]
-    Base --> Gen["Overlay 4: deploy/k8s/overlays/generic/ (Self-Managed / k3s / DigitalOcean)"]
+    Base --> Gen["Overlay 4: deploy/k8s/overlays/generic/ (Self-Managed / Minikube / Kind / k3s)"]
 
     GKE --> GKEDetails["GKE Ingress (gce) + ManagedCertificate + BackendConfig + Workload Identity + Artifact Registry"]
     EKS --> EKSDetails["AWS ALB Ingress Controller + IRSA Role Annotation + ECR"]
     AKS --> AKSDetails["Azure Workload Identity + NGINX/AGIC Ingress + ACR"]
-    Gen --> GenDetails["ingress-nginx + cert-manager Let's Encrypt ClusterIssuer + GHCR"]
+    Gen --> GenDetails["ingress-nginx + cert-manager Let's Encrypt ClusterIssuer + Local/GHCR Image"]
 ```
+
+### 4.3.1 Self-Contained Base Workload & Multi-Replica Startup Synchronization
+To guarantee that `kubectl apply -k deploy/k8s/overlays/<provider>` succeeds on any fresh cluster without manual prerequisite steps or `CreateContainerConfigError`:
+1. **Complete Base Resources (`deploy/k8s/base/`)**:
+   - `namespace.yaml`: Declares the target `Namespace` (`production`, or `staging` in `gcp-gke-staging`).
+   - `configmap.yaml`: Declares `fuel-optimizer-config` (`DJANGO_SETTINGS_MODULE`, `ALLOWED_HOSTS`, `SECURE_SSL_REDIRECT`, timeouts).
+   - `secret.yaml`: Declares `fuel-optimizer-secrets` (`DJANGO_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`), overridden with mode-`0600` high-entropy secrets in `deploy/generated/k8s-secrets.yaml` by `./bin/spotter-deploy`.
+   - `postgres.yaml`: Declares in-cluster PostgreSQL 16 (`StatefulSet: db` + `Service: db` on port `5432` with `pg_isready` readiness probe).
+   - `redis.yaml`: Declares in-cluster Redis 7 (`Deployment: redis` + `Service: redis` on port `6379` with `redis-cli ping` readiness probe).
+   - `deployment.yaml`: Includes a Kubernetes `startupProbe` (`failureThreshold: 36`, `periodSeconds: 5` = up to `180s` startup window) alongside `readinessProbe` and `livenessProbe` on `/api/v1/health/` so initial PostgreSQL table migration and seeding (`6,626` stations + `65,920` US Gazetteer entries) completes cleanly before liveness checks begin.
+2. **PostgreSQL Advisory Lock for Multi-Replica Startup (`docker/entrypoint.sh`)**:
+   - When multiple API replicas (`replicas: 2..10`) start concurrently against a newly provisioned PostgreSQL 16 database, `docker/entrypoint.sh` waits for PostgreSQL connectivity and acquires `pg_advisory_lock(7768837)` before running `migrate`, `load_fuel_stations`, and `load_us_gazetteer`, preventing concurrent DDL/seed race conditions.
 
 | Kubernetes Flavor | Overlay Path | Cloud Integrations & Provisioning from Zero |
 | :--- | :--- | :--- |
