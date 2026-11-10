@@ -1,10 +1,13 @@
-{$PRIMARY_DOMAIN:localhost} {
-    encode gzip zstd
-
-    reverse_proxy web:8000 {
-        header_up Host {host}
-        header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
-    }
+{
+	auto_https disable_redirects
 }
+
+http://localhost, http://127.0.0.1, :80, {$CADDY_DOMAIN:localhost} {
+	encode gzip zstd
+
+	reverse_proxy web:8000 {
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
