@@ -161,16 +161,18 @@ resource "google_sql_database_instance" "postgres" {
 }
 
 resource "google_sql_database" "app_db" {
-  count    = var.provision_postgres ? 1 : 0
-  name     = "spotter_fuel"
-  instance = google_sql_database_instance.postgres[0].name
+  count           = var.provision_postgres ? 1 : 0
+  name            = "spotter_fuel"
+  instance        = google_sql_database_instance.postgres[0].name
+  deletion_policy = "ABANDON"
 }
 
 resource "google_sql_user" "app_user" {
-  count    = var.provision_postgres ? 1 : 0
-  name     = "spotter"
-  instance = google_sql_database_instance.postgres[0].name
-  password = var.db_password
+  count           = var.provision_postgres ? 1 : 0
+  name            = "spotter"
+  instance        = google_sql_database_instance.postgres[0].name
+  password        = var.db_password
+  deletion_policy = "ABANDON"
 }
 
 # 4. Optional: Provision Managed Google Cloud Memorystore for Redis 7 from scratch
@@ -202,6 +204,8 @@ resource "google_cloud_run_v2_service" "app" {
   depends_on = [
     google_project_service.run_api,
     terraform_data.build_and_push_image,
+    google_sql_database.app_db,
+    google_sql_user.app_user,
   ]
 
   template {
